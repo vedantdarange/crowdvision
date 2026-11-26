@@ -23,7 +23,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.extensions import db
+from app.extensions import Base, db
 
 # ---------------------------------------------------------------------------
 # Enum value sets (must match contract §3 exactly)
@@ -61,7 +61,7 @@ def _in_check(col: str, values: tuple[str, ...]) -> str:
 # ---------------------------------------------------------------------------
 # users
 # ---------------------------------------------------------------------------
-class User(db.Model):
+class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -88,7 +88,7 @@ class User(db.Model):
 # ---------------------------------------------------------------------------
 # zones
 # ---------------------------------------------------------------------------
-class Zone(db.Model):
+class Zone(Base):
     __tablename__ = "zones"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -130,7 +130,7 @@ class Zone(db.Model):
 # ---------------------------------------------------------------------------
 # sources
 # ---------------------------------------------------------------------------
-class Source(db.Model):
+class Source(Base):
     __tablename__ = "sources"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -157,7 +157,7 @@ class Source(db.Model):
 # ---------------------------------------------------------------------------
 # zone_samples  (time-series; kept 7 days)
 # ---------------------------------------------------------------------------
-class ZoneSample(db.Model):
+class ZoneSample(Base):
     __tablename__ = "zone_samples"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -178,7 +178,7 @@ class ZoneSample(db.Model):
 # ---------------------------------------------------------------------------
 # alerts
 # ---------------------------------------------------------------------------
-class AlertModel(db.Model):
+class AlertModel(Base):
     __tablename__ = "alerts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -249,7 +249,7 @@ class AlertModel(db.Model):
 # ---------------------------------------------------------------------------
 # alert_events
 # ---------------------------------------------------------------------------
-class AlertEvent(db.Model):
+class AlertEvent(Base):
     __tablename__ = "alert_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -277,7 +277,7 @@ class AlertEvent(db.Model):
 # ---------------------------------------------------------------------------
 # advisories
 # ---------------------------------------------------------------------------
-class Advisory(db.Model):
+class Advisory(Base):
     __tablename__ = "advisories"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -305,7 +305,7 @@ class Advisory(db.Model):
 # ---------------------------------------------------------------------------
 # reports
 # ---------------------------------------------------------------------------
-class Report(db.Model):
+class Report(Base):
     __tablename__ = "reports"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -347,7 +347,7 @@ class Report(db.Model):
 # ---------------------------------------------------------------------------
 # push_subscriptions
 # ---------------------------------------------------------------------------
-class PushSubscription(db.Model):
+class PushSubscription(Base):
     __tablename__ = "push_subscriptions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -366,7 +366,7 @@ class PushSubscription(db.Model):
 # ---------------------------------------------------------------------------
 # audit_logs
 # ---------------------------------------------------------------------------
-class AuditLog(db.Model):
+class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -385,7 +385,7 @@ class AuditLog(db.Model):
 # ---------------------------------------------------------------------------
 # settings  (key-value store; defaults in code, DB overrides)
 # ---------------------------------------------------------------------------
-class Settings(db.Model):
+class Settings(Base):
     __tablename__ = "settings"
 
     key: Mapped[str] = mapped_column(String(100), primary_key=True)

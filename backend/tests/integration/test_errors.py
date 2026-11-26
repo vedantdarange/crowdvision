@@ -23,9 +23,21 @@ class _SamplePayload(BaseModel):
     count: int = Field(ge=1)
 
 
-def _register_test_routes(app):
-    """Add ephemeral routes for error testing (called once from fixture)."""
+@pytest.fixture(scope="module")
+def err_client():
+    """Dedicated app with ephemeral error/upload routes registered before 1st request."""
     from flask import Blueprint, request
+
+    from app import create_app
+    from app.extensions import db
+
+    err_app = create_app(
+        config_override={
+            "TESTING": True,
+            "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
+            "RATELIMIT_ENABLED": False,
+        }
+    )
 
     bp = Blueprint("test_errors_bp", __name__)
 
@@ -48,64 +60,62 @@ def _register_test_routes(app):
         is_bytes_io = isinstance(f.stream, io.BytesIO)
         return {"data": {"is_bytes_io": is_bytes_io, "size": len(f.read())}}, 200
 
-    @bp.get("/test/client-ip")
-    def client_ip():
-        return {"data": {"ip": request.remote_addr}}, 200
+    err_app.register_blueprint(bp, url_prefix="/api/v1")
 
-    app.register_blueprint(bp, url_prefix="/api/v1")
+    with err_app.app_context():
+        db.create_all()
+        with err_app.test_client() as c:
+            yield c
+        db.drop_all()
 
 
 class TestErrorEnvelopes:
-    @pytest.fixture(autouse=True, scope="class")
-    def _routes(self, app):
-        _register_test_routes(app)
-
-    def test_404_envelope(self, client):
-        resp = client.get("/api/v1/does-not-exist-xyz")
+    def test_404_envelope(self, err_client):
+        resp = err_client.get("/api/v1/does-not-exist-xyz")
         assert resp.status_code == 404
         body = resp.get_json()
         assert "error" in body
         assert body["error"]["code"] == "NOT_FOUND"
         assert "message" in body["error"]
 
-    def test_405_envelope(self, client):
-        resp = client.post("/api/v1/health")
+    def test_405_envelope(self, err_client):
+        resp = err_client.post("/api/v1/health")
         assert resp.status_code == 405
         body = resp.get_json()
         assert "error" in body
         assert body["error"]["code"] == "METHOD_NOT_ALLOWED"
 
-    def test_app_error_envelope(self, client):
-        resp = client.get("/api/v1/test/raise-app-error")
+    def test_app_error_envelope(self, err_client):
+        resp = err_client.get("/api/v1/test/raise-app-error")
         assert resp.status_code == 409
         body = resp.get_json()
         assert body["error"]["code"] == "CONFLICT"
         assert "Zone name already taken" in body["error"]["message"]
 
-    def test_pydantic_validation_error_envelope(self, client):
-        resp = client.post("/api/v1/test/validate", json={"count": -1})
+    def test_pydantic_validation_error_envelope(self, err_client):
+        resp = err_client.post("/api/v1/test/validate", json={"count": -1})
         assert resp.status_code == 422
         body = resp.get_json()
         assert body["error"]["code"] == "VALIDATION_ERROR"
         assert "count" in body["error"]["details"]
 
-    def test_unexpected_exception_returns_500(self, client):
-        resp = client.get("/api/v1/test/raise-unexpected")
+    def test_unexpected_exception_returns_500(self, err_client):
+        resp = err_client.get("/api/v1/test/raise-unexpected")
         assert resp.status_code == 500
         body = resp.get_json()
         assert body["error"]["code"] == "INTERNAL"
         assert "boom" not in body["error"]["message"].lower()
 
-    def test_no_stack_trace_in_error_body(self, client):
-        resp = client.get("/api/v1/test/raise-unexpected")
+    def test_no_stack_trace_in_error_body(self, err_client):
+        resp = err_client.get("/api/v1/test/raise-unexpected")
         text = resp.get_data(as_text=True)
         assert "Traceback" not in text
         assert "RuntimeError" not in text
 
-    def test_large_upload_stays_in_memory(self, client):
+    def test_large_upload_stays_in_memory(self, err_client):
         """Uploads > 500 KB must use io.BytesIO and never spool to disk."""
-        payload = b"x" * (600 * 1024)  # 600 KB (> Werkzeug's 500 KB spool threshold)
-        resp = client.post(
+        payload = b"x" * (600 * 1024)
+        resp = err_client.post(
             "/api/v1/test/upload",
             data={"image": (io.BytesIO(payload), "test.jpg")},
             content_type="multipart/form-data",

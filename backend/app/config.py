@@ -66,6 +66,8 @@ class Settings:
     trusted_proxy_count: int
     use_tracker: bool
     report_retention_days: int
+    rate_limit_register: str
+    rate_limit_login: str
     app_version: str = "0.1.0"
     contract_version: str = "1.1.0"
 
@@ -99,6 +101,8 @@ def load_settings() -> Settings:
         trusted_proxy_count=_int("TRUSTED_PROXY_COUNT", 0),
         use_tracker=_bool("USE_TRACKER", False),
         report_retention_days=_int("REPORT_RETENTION_DAYS", 30),
+        rate_limit_register=os.environ.get("RATE_LIMIT_REGISTER", "10/hour"),
+        rate_limit_login=os.environ.get("RATE_LIMIT_LOGIN", "20/minute"),
     )
 
 

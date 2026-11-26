@@ -16,10 +16,16 @@ from flask_socketio import SocketIO
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import DeclarativeBase
 
 logger = logging.getLogger(__name__)
 
-db = SQLAlchemy()
+
+class Base(DeclarativeBase):
+    """Typed SQLAlchemy 2.0 declarative base for all ORM models."""
+
+
+db = SQLAlchemy(model_class=Base)
 migrate = Migrate()
 jwt = JWTManager()
 cors = CORS()
