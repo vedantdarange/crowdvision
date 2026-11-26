@@ -1,0 +1,20 @@
+# Environment & secrets
+.env
+
+# Database / runtime instance files
+backend/instance/
+
+# Python virtual environments & caches
+venv/
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Frontend build & dependencies
+node_modules/
+frontend/dist/
+
+# Model weights & evaluation datasets (large files)
+*.pt
+eval/data/
