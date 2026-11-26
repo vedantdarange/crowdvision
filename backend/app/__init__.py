@@ -25,6 +25,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from app.config import load_settings, normalize_sqlite_url
 from app.container import wire
+from app.core.auth import configure_jwt_error_loaders
 from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.core.responses import error_response
@@ -70,13 +71,14 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     # -----------------------------------------------------------------------
     flask_app.config["SECRET_KEY"] = current_settings.secret_key
     flask_app.config["JWT_SECRET_KEY"] = current_settings.jwt_secret_key
-    flask_app.config["JWT_ACCESS_TOKEN_EXPIRES"] = 60 * 60          # 60 min
+    flask_app.config["JWT_ACCESS_TOKEN_EXPIRES"] = 60 * 60            # 60 min
     flask_app.config["JWT_REFRESH_TOKEN_EXPIRES"] = 7 * 24 * 60 * 60  # 7 days
     flask_app.config["SQLALCHEMY_DATABASE_URI"] = current_settings.database_url
     flask_app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    flask_app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024        # 5 MB hard limit
+    flask_app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024          # 5 MB hard limit
     flask_app.config["RATELIMIT_STORAGE_URI"] = "memory://"
-    flask_app.config["RATELIMIT_DEFAULT"] = "200/hour"
+    flask_app.config["RATELIMIT_REGISTER"] = current_settings.rate_limit_register
+    flask_app.config["RATELIMIT_LOGIN"] = current_settings.rate_limit_login
 
     if config_override:
         flask_app.config.update(config_override)
@@ -114,6 +116,7 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     db.init_app(flask_app)
     migrate.init_app(flask_app, db)
     jwt.init_app(flask_app)
+    configure_jwt_error_loaders(jwt)
     limiter.init_app(flask_app)
     cors.init_app(
         flask_app,
@@ -133,11 +136,13 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     # -----------------------------------------------------------------------
     # Blueprints
     # -----------------------------------------------------------------------
+    from app.api.v1.auth import auth_bp
     from app.api.v1.health import health_bp
+    from app.api.v1.users import users_bp
 
     flask_app.register_blueprint(health_bp, url_prefix="/api/v1")
-
-    # B1+ blueprints registered here as phases are built.
+    flask_app.register_blueprint(auth_bp, url_prefix="/api/v1/auth")
+    flask_app.register_blueprint(users_bp, url_prefix="/api/v1/users")
 
     # -----------------------------------------------------------------------
     # CLI commands
@@ -149,7 +154,7 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     # -----------------------------------------------------------------------
     # Dependency injection wiring
     # -----------------------------------------------------------------------
-    wire()
+    wire(flask_app)
 
     # -----------------------------------------------------------------------
     # Global error handlers
@@ -190,6 +195,12 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     def handle_413(_: RequestEntityTooLarge) -> tuple[Response, int]:
         return error_response(
             "PAYLOAD_TOO_LARGE", "Request payload exceeds maximum size.", status=413
+        )
+
+    @flask_app.errorhandler(429)
+    def handle_429(_: HTTPException) -> tuple[Response, int]:
+        return error_response(
+            "RATE_LIMITED", "Too many requests. Please try again later.", status=429
         )
 
     @flask_app.errorhandler(HTTPException)
