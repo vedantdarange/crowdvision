@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { Link, NavLink, Outlet, ScrollRestoration } from 'react-router';
+import {
+  Link,
+  NavLink,
+  Outlet,
+  ScrollRestoration,
+  useNavigate,
+} from 'react-router';
 import {
   Activity,
   Map,
@@ -41,6 +47,15 @@ import {
 } from '@/components/ui/sheet';
 import { ThemeProvider, useTheme } from '../ThemeProvider';
 import { SuspenseBoundary } from '@/components/SuspenseBoundary';
+import { useSession } from '@/features/auth';
+import { loginPath } from '@/features/auth/access';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu';
 import './shell.css';
 
 type Audience = 'public' | 'auth' | 'police' | 'admin';
@@ -50,7 +65,6 @@ const publicMenu: Item[] = [
   ['/advisories', 'Advisories', Bell],
   ['/report/crowd', 'Report a crowd', NotebookPen],
   ['/help', 'Help centre', LifeBuoy],
-  ['/login', 'Account', UserRound],
 ];
 const operations: Item[] = [
   ['/police', 'Dashboard', LayoutDashboard],
@@ -62,7 +76,6 @@ const extra: Item[] = [
   ['/police/advisories', 'Broadcast', Megaphone],
   ['/my-reports', 'My reports', FileText],
   ['/help', 'Help centre', LifeBuoy],
-  ['/login', 'Account', UserRound],
 ];
 const administration: Item[] = [
   ['/admin/zones', 'Zones', MapPinned],
@@ -73,9 +86,9 @@ const administration: Item[] = [
   ['/admin/audit', 'Audit log', History],
 ];
 const spaces: Item[] = [
-  ['/', 'Public preview', Globe],
-  ['/police', 'Police preview', ShieldCheck],
-  ['/admin/zones', 'Admin preview', Sliders],
+  ['/', 'Public workspace', Globe],
+  ['/police', 'Police workspace', ShieldCheck],
+  ['/admin/zones', 'Admin workspace', Sliders],
 ];
 function MenuLinks({
   items,
@@ -127,7 +140,29 @@ function Shell({ audience }: { audience: Audience }) {
     }
   }
   const professional = audience === 'admin' || audience === 'police';
-  const main = professional ? operations : publicMenu;
+  const { user, logout } = useSession();
+  const navigate = useNavigate();
+  const workspaces = spaces.filter(
+    ([path]) =>
+      path === '/' ||
+      (path === '/police' && user && user.role !== 'citizen') ||
+      user?.role === 'admin',
+  );
+  const main: Item[] = professional
+    ? operations
+    : publicMenu.map((item) =>
+        item[0] === '/report/crowd' && !user
+          ? [loginPath(item[0]), item[1], item[2]]
+          : item,
+      );
+  const more: Item[] = professional
+    ? extra
+    : user
+      ? [
+          ['/my-reports', 'My reports', FileText],
+          ['/report/sos', 'Send SOS', Siren],
+        ]
+      : [['/login', 'Account', UserRound]];
   const space =
     audience === 'admin'
       ? 'Administration'
@@ -139,12 +174,12 @@ function Shell({ audience }: { audience: Audience }) {
       <nav aria-label="Main navigation">
         <p className="rail-caption">Main menu</p>
         <MenuLinks
-          items={professional ? [...operations, ...extra] : main}
+          items={[...main, ...more]}
           compact={!mobile && collapsed}
           close={mobile}
         />
       </nav>
-      {audience === 'admin' && (
+      {user?.role === 'admin' && (
         <nav aria-label="Administration">
           <p className="rail-caption">Administration</p>
           <MenuLinks
@@ -154,14 +189,16 @@ function Shell({ audience }: { audience: Audience }) {
           />
         </nav>
       )}
-      <nav aria-label="Preview workspaces">
-        <p className="rail-caption">Workspaces</p>
-        <MenuLinks
-          items={spaces}
-          compact={!mobile && collapsed}
-          close={mobile}
-        />
-      </nav>
+      {workspaces.length > 1 && (
+        <nav aria-label="Workspaces">
+          <p className="rail-caption">Workspaces</p>
+          <MenuLinks
+            items={workspaces}
+            compact={!mobile && collapsed}
+            close={mobile}
+          />
+        </nav>
+      )}
     </>
   );
   return (
@@ -209,9 +246,39 @@ function Shell({ audience }: { audience: Audience }) {
             >
               {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
             </button>
-            <Link className="cv-tool" to="/login" aria-label="Open account">
-              <UserRound size={18} />
-            </Link>
+            {user ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="cv-tool"
+                    aria-label={'Account for ' + user.name}
+                  >
+                    <UserRound size={18} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>
+                    {user.name} · {user.role}
+                  </DropdownMenuLabel>
+                  <DropdownMenuItem onSelect={toggle}>
+                    Switch to {theme === 'dark' ? 'light' : 'dark'} mode
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      logout();
+                      void navigate('/', { replace: true });
+                    }}
+                  >
+                    Log out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Link className="cv-tool" to="/login" aria-label="Open account">
+                <UserRound size={18} />
+              </Link>
+            )}
           </div>
         </header>
         <main id="main" tabIndex={-1}>
@@ -224,16 +291,42 @@ function Shell({ audience }: { audience: Audience }) {
         <MenuLinks items={main.slice(0, 4)} />
         <Sheet>
           <SheetTrigger asChild>
-            <button className="rail-link" aria-label="More navigation">
-              <Menu size={18} />
-              More
+            <button
+              className="rail-link"
+              aria-label={
+                professional ? 'More navigation' : 'Account navigation'
+              }
+            >
+              {professional ? <Menu size={18} /> : <UserRound size={18} />}
+              {professional ? 'More' : 'Account'}
             </button>
           </SheetTrigger>
           <SheetContent className="overflow-y-auto">
             <SheetHeader>
-              <SheetTitle>Navigation</SheetTitle>
+              <SheetTitle>
+                {professional
+                  ? 'Navigation'
+                  : user
+                    ? user.name + ' · ' + user.role
+                    : 'Account'}
+              </SheetTitle>
             </SheetHeader>
-            <div className="drawer-links">{navigation(true)}</div>
+            <div className="drawer-links">
+              {navigation(true)}
+              {!professional && user && (
+                <SheetClose asChild>
+                  <button
+                    className="rail-link"
+                    onClick={() => {
+                      logout();
+                      void navigate('/', { replace: true });
+                    }}
+                  >
+                    Log out
+                  </button>
+                </SheetClose>
+              )}
+            </div>
           </SheetContent>
         </Sheet>
       </nav>

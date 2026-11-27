@@ -1,9 +1,12 @@
-import { expect, it } from 'vitest';
+import { useSession } from '@/features/auth';
+import seedUser from '../../contract/examples/user.json';
+import { afterEach, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, matchRoutes } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { routes } from '@/app/router';
+afterEach(() => useSession.getState().logout());
 const pages = [
   '/',
   '/zones/1',
@@ -30,13 +33,14 @@ const pages = [
   '/admin/analytics',
   '/admin/audit',
 ];
-it.each(pages)('has an explicitly lazy placeholder for %s', (path) => {
+it.each(pages)('has an lazy route for %s', (path) => {
   const match = matchRoutes(routes, path)?.at(-1);
   expect(match?.route.path).not.toBe('*');
   expect(match?.route.lazy).toBeTypeOf('function');
   expect(match?.route.handle).toHaveProperty('title');
 });
 it('renders the admin layout and lazy route with its administration navigation', async () => {
+  useSession.setState({ user: { ...seedUser, role: 'admin' } });
   const router = createMemoryRouter(routes, {
     initialEntries: ['/admin/zones'],
   });
