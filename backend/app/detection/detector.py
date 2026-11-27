@@ -1,6 +1,7 @@
-"""app/detection/detector.py — Detector Protocol and FakeDetector (plan §8.2).
+"""app/detection/detector.py — Detector Protocol, FakeDetector, and UltralyticsDetector (plan §8.2).
 
-No torch / ultralytics imports in this phase; UltralyticsDetector is added in B5.
+No top-level torch / ultralytics / OpenCV imports so tests and fake mode remain
+fast and torch-free in the main process.
 """
 from __future__ import annotations
 
@@ -80,6 +81,100 @@ class FakeDetector:
         return boxes
 
 
+def _clamp01(v: float) -> float:
+    return max(0.0, min(1.0, float(v)))
+
+
+class FrameDecodeError(ValueError):
+    """Raised strictly when decoding incoming frame bytes into an image fails."""
+
+
+class UltralyticsDetector:
+    """Real YOLOv8 person detector backed by Ultralytics + OpenCV + supervision."""
+
+    def __init__(
+        self,
+        *,
+        model_path: str | None = None,
+        warmup_imgsz: int = 640,
+        default_conf: float = 0.35,
+        loaded_model: Any = None,
+    ) -> None:
+        if loaded_model is None:
+            from app.detection.model_loader import load_ultralytics_model
+
+            loaded_model = load_ultralytics_model(
+                model_path=model_path,
+                warmup_imgsz=warmup_imgsz,
+                conf=default_conf,
+            )
+        self._loaded = loaded_model
+        self._model = loaded_model.model
+        self._person_classes: list[int] | None = loaded_model.person_classes
+        self.names = loaded_model.names
+        self.warmup_ms: float = float(loaded_model.warmup_ms)
+        self.model_path = loaded_model.model_path
+
+    def detect(
+        self, frame: Any, source_id: int, conf: float, imgsz: int
+    ) -> list[Box]:
+        """Decode JPEG in RAM, run YOLO predict, convert via supervision, normalize 0..1."""
+        import cv2
+        import numpy as np
+        import supervision as sv
+
+        if isinstance(frame, (bytes, bytearray, memoryview)):
+            raw = bytes(frame)
+            if not raw:
+                raise FrameDecodeError("Empty JPEG frame.")
+            arr = np.frombuffer(raw, dtype=np.uint8)
+            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        elif isinstance(frame, np.ndarray):
+            img = frame
+        else:
+            raise FrameDecodeError("Frame must be JPEG bytes or numpy ndarray.")
+
+        if img is None or img.ndim < 2 or img.shape[0] <= 0 or img.shape[1] <= 0:
+            raise FrameDecodeError("Failed to decode frame image.")
+
+        frame_h, frame_w = int(img.shape[0]), int(img.shape[1])
+        conf_f = float(conf)
+        imgsz_i = int(imgsz) if int(imgsz) > 0 else 640
+
+        predict_kwargs: dict[str, Any] = {
+            "imgsz": imgsz_i,
+            "conf": conf_f,
+            "verbose": False,
+        }
+        if self._person_classes is not None:
+            predict_kwargs["classes"] = self._person_classes
+
+        results = self._model.predict(img, **predict_kwargs)
+        if not results:
+            return []
+
+        detections = sv.Detections.from_ultralytics(results[0])
+        if len(detections) == 0:
+            return []
+
+        xyxy = detections.xyxy
+        confs = detections.confidence
+        boxes: list[Box] = []
+        for idx in range(len(detections)):
+            bx1, by1, bx2, by2 = xyxy[idx]
+            score = float(confs[idx]) if confs is not None else 1.0
+            if score < conf_f:
+                continue
+            nx1 = round(_clamp01(float(bx1) / frame_w), 4)
+            ny1 = round(_clamp01(float(by1) / frame_h), 4)
+            nx2 = round(_clamp01(float(bx2) / frame_w), 4)
+            ny2 = round(_clamp01(float(by2) / frame_h), 4)
+            if nx2 <= nx1 or ny2 <= ny1:
+                continue
+            boxes.append((nx1, ny1, nx2, ny2, round(score, 4)))
+        return boxes
+
+
 def build_detector(
     backend: str = "fake",
     *,
@@ -87,6 +182,8 @@ def build_detector(
     default_count: int = 0,
     counts: dict[int, int] | None = None,
     delay_ms: float = 0.0,
+    model_path: str | None = None,
+    warmup_imgsz: int = 640,
 ) -> Detector:
     """Instantiate the configured detector backend (`fake` or `ultralytics`)."""
     norm = (backend or "fake").strip().lower()
@@ -98,7 +195,8 @@ def build_detector(
             delay_ms=delay_ms,
         )
     if norm == "ultralytics":
-        raise RuntimeError(
-            "Ultralytics detector backend is not installed yet (implemented in B5b)."
+        return UltralyticsDetector(
+            model_path=model_path,
+            warmup_imgsz=warmup_imgsz,
         )
     raise ValueError(f"Unsupported DETECTOR_BACKEND: {backend!r}")

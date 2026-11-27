@@ -68,11 +68,23 @@ class DetectionManager:
         worker_seed: int = 42,
         worker_default_count: int = 0,
         worker_delay_ms: float = 0.0,
+        model_path: str | None = None,
     ) -> None:
         self._backend = (backend or "fake").strip().lower()
-        self.detector: Detector = (
-            detector if detector is not None else build_detector(self._backend)
-        )
+        self._model_path = model_path
+        self.detector: Detector | None
+        if detector is not None:
+            self.detector = detector
+        elif self._backend == "fake":
+            self.detector = FakeDetector(
+                seed=int(worker_seed),
+                default_count=max(0, int(worker_default_count)),
+            )
+        elif self._backend == "ultralytics":
+            # Keep main process free of torch/ultralytics; worker loads & warms up.
+            self.detector = None
+        else:
+            raise ValueError(f"Unsupported DETECTOR_BACKEND: {backend!r}")
         self._use_tracker = bool(use_tracker)
         self.engine = zone_engine
         self._engine_lock = engine_lock
@@ -167,6 +179,18 @@ class DetectionManager:
     # Worker lifecycle
     # ------------------------------------------------------------------
     def _spawn_worker_process(self) -> None:
+        worker_fps, worker_conf, worker_imgsz = 3.0, 0.35, 640
+        if self._flask_app is not None:
+            try:
+                with self._flask_app.app_context():
+                    with self._db_read_lock:
+                        cfg = self._settings.get_settings()
+                    worker_fps = float(cfg.get("target_fps", 3.0))
+                    worker_conf = float(cfg.get("detect_conf", 0.35))
+                    worker_imgsz = int(cfg.get("frame_width", 640))
+            except Exception:
+                pass
+
         req_q = self._ctx.Queue(maxsize=self._queue_maxsize)
         res_q = self._ctx.Queue()
         proc = self._ctx.Process(
@@ -180,6 +204,10 @@ class DetectionManager:
                 "counts": dict(self._fake_counts),
                 "delay_ms": self._worker_delay_ms,
                 "use_tracker": self._use_tracker,
+                "model_path": self._model_path,
+                "target_fps": worker_fps,
+                "detect_conf": worker_conf,
+                "warmup_imgsz": worker_imgsz,
             },
             daemon=True,
         )
@@ -206,9 +234,13 @@ class DetectionManager:
         with self._pipeline_lock:
             if self._started:
                 return
-            # Validate backend synchronously before spawning
-            if self._backend != "fake" and not isinstance(self.detector, FakeDetector):
-                build_detector(self._backend)
+            # Validate backend / model path synchronously before spawning (no torch import)
+            if self._backend == "ultralytics":
+                from app.detection.model_loader import resolve_model_path
+
+                resolve_model_path(self._model_path)
+            elif self._backend != "fake" and not isinstance(self.detector, FakeDetector):
+                build_detector(self._backend, model_path=self._model_path)
             self._flask_app = flask_app
             self._manual_stop = False
             self._restart_count = 0
@@ -368,7 +400,12 @@ class DetectionManager:
         got_pong = probe_evt.wait(timeout=timeout)
         with self._pipeline_lock:
             self._ping_waiters.pop(ping_id, None)
-        alive = bool(got_pong and proc.is_alive())
+        alive = bool(
+            got_pong
+            and self._started
+            and self._detector_status != "unavailable"
+            and proc.is_alive()
+        )
         if alive:
             return self._detector_status, True
         return (self._detector_status if proc.is_alive() else "unavailable"), False

@@ -12,7 +12,7 @@ import queue
 import time
 from typing import Any
 
-from app.detection.detector import Detector, FakeDetector, build_detector
+from app.detection.detector import Detector, FakeDetector, FrameDecodeError, build_detector
 from app.detection.protocol import (
     DetectRequest,
     DetectResult,
@@ -22,7 +22,12 @@ from app.detection.protocol import (
     SetFakeCount,
     Shutdown,
 )
-from app.detection.tracker import INACTIVITY_RESET_S, PassThroughTracker, TrackerHook
+from app.detection.tracker import (
+    INACTIVITY_RESET_S,
+    PassThroughTracker,
+    TrackerHook,
+    build_tracker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +42,10 @@ def run_worker(
     counts: dict[int, int] | None = None,
     delay_ms: float = 0.0,
     use_tracker: bool = False,
+    model_path: str | None = None,
+    target_fps: float = 3.0,
+    detect_conf: float = 0.35,
+    warmup_imgsz: int = 640,
 ) -> None:
     """Main worker loop running inside a spawned child process."""
     try:
@@ -46,12 +55,18 @@ def run_worker(
             default_count=default_count,
             counts=counts,
             delay_ms=delay_ms,
+            model_path=model_path,
+            warmup_imgsz=warmup_imgsz,
         )
     except Exception as exc:
         logger.error("Detection worker failed to initialize backend=%s: %s", backend, type(exc).__name__)
         return
 
-    tracker: TrackerHook | None = PassThroughTracker() if use_tracker else None
+    tracker: TrackerHook | None = build_tracker(
+        use_tracker,
+        frame_rate=target_fps,
+        track_activation_threshold=detect_conf,
+    )
     source_last_seen: dict[int, float] = {}
 
     # Signal warm-up completion so /health transitions loading -> ready.
@@ -118,6 +133,23 @@ def run_worker(
                     error=None,
                     boxes=boxes,
                     count=raw_count,
+                    infer_ms=infer_ms,
+                    request_id=msg.request_id,
+                )
+            except FrameDecodeError:
+                infer_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+                logger.warning(
+                    "Worker decode error for source_id=%s seq=%s",
+                    msg.source_id,
+                    msg.seq,
+                )
+                res = DetectResult(
+                    source_id=msg.source_id,
+                    seq=msg.seq,
+                    ok=False,
+                    error="BAD_IMAGE",
+                    boxes=[],
+                    count=0,
                     infer_ms=infer_ms,
                     request_id=msg.request_id,
                 )

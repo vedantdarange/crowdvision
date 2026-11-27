@@ -201,15 +201,15 @@ class TestFakeFeedProfiles:
 
 
 class TestB5aComponents:
-    def test_set_fake_count_pickles_and_ultralytics_raises_not_installed(self):
+    def test_set_fake_count_pickles_and_build_detector_validation(self):
         import pytest
 
         msg = SetFakeCount(1, 5)
         assert pickle.loads(pickle.dumps(msg)) == msg
         assert isinstance(build_detector("fake"), FakeDetector)
 
-        with pytest.raises(RuntimeError, match="not installed yet"):
-            build_detector("ultralytics")
+        with pytest.raises(FileNotFoundError):
+            build_detector("ultralytics", model_path="does_not_exist_model.pt")
         with pytest.raises(ValueError):
             build_detector("unknown-backend")
 
@@ -278,7 +278,7 @@ class TestB5aComponents:
 
         req_q: queue.Queue = queue.Queue()
         res_q: queue.Queue = queue.Queue()
-        with patch("app.detection.worker.PassThroughTracker", side_effect=_make_tracker):
+        with patch("app.detection.worker.build_tracker", side_effect=lambda use_tr, **kw: _make_tracker() if use_tr else None):
             t = threading.Thread(
                 target=run_worker,
                 kwargs={
@@ -334,4 +334,205 @@ class TestB5aComponents:
             t.join(timeout=2.0)
             assert not t.is_alive()
             assert tracker.reset_count_by_source.get(5, 0) == 2
+
+
+class TestB5bModelLoaderAndDetectors:
+    def test_extract_person_classes_and_fallback(self):
+        from app.detection.model_loader import extract_person_classes
+
+        assert extract_person_classes({0: "person"}) == [0]
+        assert extract_person_classes({0: "bicycle", 2: "Person", 3: "car"}) == [2]
+        assert extract_person_classes(["car", "person"]) == [1]
+        # Unexpected class names -> fall back to None (no class filter)
+        assert extract_person_classes({0: "crowd_head"}) is None
+        assert extract_person_classes(None) is None
+
+    def test_resolve_model_path_checks_missing_and_existing(self, tmp_path):
+        import pytest
+        from app.detection.model_loader import resolve_model_path
+
+        dummy_pt = tmp_path / "best.pt"
+        dummy_pt.write_bytes(b"pt-header")
+        assert resolve_model_path(str(dummy_pt)) == dummy_pt.resolve()
+
+        with pytest.raises(FileNotFoundError):
+            resolve_model_path(str(tmp_path / "missing.pt"))
+
+    def test_ultralytics_detector_decodes_jpeg_and_normalizes_boxes(self):
+        import types
+        import pytest
+
+        cv2 = pytest.importorskip("cv2")
+        np = pytest.importorskip("numpy")
+        sv = pytest.importorskip("supervision")
+
+        from app.detection.detector import UltralyticsDetector
+
+        # Build a genuine 640x480 in-RAM JPEG via OpenCV
+        blank = np.zeros((480, 640, 3), dtype=np.uint8)
+        ok, enc = cv2.imencode(".jpg", blank)
+        assert ok
+        jpg_bytes = enc.tobytes()
+
+        seen_calls: list[dict] = []
+
+        class _FakeYOLOResult:
+            boxes = None
+
+        class _FakeYOLOModel:
+            def predict(self, img, **kwargs):
+                seen_calls.append({"shape": img.shape, **kwargs})
+                return [_FakeYOLOResult()]
+
+        fake_loaded = types.SimpleNamespace(
+            model=_FakeYOLOModel(),
+            person_classes=[0],
+            names={0: "person"},
+            warmup_ms=10.0,
+            model_path="fake.pt",
+        )
+        fake_det = sv.Detections(
+            xyxy=np.array([[64.0, 48.0, 320.0, 240.0], [0.0, 0.0, 700.0, 500.0]], dtype=np.float32),
+            confidence=np.array([0.85, 0.20], dtype=np.float32),
+        )
+
+        det = UltralyticsDetector(loaded_model=fake_loaded)
+        with patch.object(sv.Detections, "from_ultralytics", return_value=fake_det):
+            boxes = det.detect(jpg_bytes, source_id=1, conf=0.35, imgsz=640)
+
+        assert len(seen_calls) == 1
+        assert seen_calls[0]["shape"] == (480, 640, 3)
+        assert seen_calls[0]["imgsz"] == 640
+        assert seen_calls[0]["conf"] == 0.35
+        assert seen_calls[0]["classes"] == [0]
+
+        # Only box with conf >= 0.35 kept, normalized to 0..1 by 640x480
+        assert boxes == [(0.1, 0.1, 0.5, 0.5, 0.85)]
+
+        # Unexpected class names -> person_classes=None -> no classes kwarg passed
+        seen_calls.clear()
+        fake_loaded_unfiltered = types.SimpleNamespace(
+            model=_FakeYOLOModel(),
+            person_classes=None,
+            names={0: "crowd"},
+            warmup_ms=5.0,
+            model_path="fake.pt",
+        )
+        det_unfiltered = UltralyticsDetector(loaded_model=fake_loaded_unfiltered)
+        with patch.object(sv.Detections, "from_ultralytics", return_value=sv.Detections.empty()):
+            assert det_unfiltered.detect(jpg_bytes, source_id=1, conf=0.35, imgsz=640) == []
+        assert "classes" not in seen_calls[0]
+
+        # Invalid JPEG raises FrameDecodeError (subclass of ValueError)
+        from app.detection.detector import FrameDecodeError
+
+        with pytest.raises(FrameDecodeError):
+            det.detect(b"not-a-jpeg", source_id=1, conf=0.35, imgsz=640)
+
+        # ValueError raised inside model.predict is NOT a FrameDecodeError
+        class _PredictRaisesValueError:
+            def predict(self, img, **kwargs):
+                raise ValueError("unexpected tensor shape error")
+
+        det_pred_err = UltralyticsDetector(
+            loaded_model=types.SimpleNamespace(
+                model=_PredictRaisesValueError(),
+                person_classes=[0],
+                names={0: "person"},
+                warmup_ms=1.0,
+                model_path="fake.pt",
+            )
+        )
+        with pytest.raises(ValueError) as exc_info:
+            det_pred_err.detect(jpg_bytes, source_id=1, conf=0.35, imgsz=640)
+        assert not isinstance(exc_info.value, FrameDecodeError)
+
+    def test_worker_maps_frame_decode_error_to_bad_image_and_predict_error_to_unavailable(self):
+        import queue
+        import threading
+        from app.detection.detector import FrameDecodeError
+        from app.detection.worker import run_worker
+
+        class _SelectiveFailDetector:
+            def detect(self, frame, source_id, conf, imgsz):
+                if frame == b"decode-fail":
+                    raise FrameDecodeError("corrupt jpeg")
+                if frame == b"predict-fail":
+                    raise ValueError("predict bug")
+                return [(0.1, 0.1, 0.2, 0.2, 0.9)]
+
+        req_q: queue.Queue = queue.Queue()
+        res_q: queue.Queue = queue.Queue()
+        with patch("app.detection.worker.build_detector", return_value=_SelectiveFailDetector()):
+            t = threading.Thread(
+                target=run_worker,
+                kwargs={"request_queue": req_q, "result_queue": res_q, "backend": "fake"},
+                daemon=True,
+            )
+            t.start()
+            assert isinstance(res_q.get(timeout=2.0), Pong)
+
+            req_q.put(DetectRequest(1, 1, b"decode-fail", 640, 480, False, 0.35, 640, 1.0, request_id=11))
+            r_decode = res_q.get(timeout=2.0)
+            assert r_decode.request_id == 11 and r_decode.ok is False and r_decode.error == "BAD_IMAGE"
+
+            req_q.put(DetectRequest(1, 2, b"predict-fail", 640, 480, False, 0.35, 640, 2.0, request_id=12))
+            r_pred = res_q.get(timeout=2.0)
+            assert r_pred.request_id == 12 and r_pred.ok is False and r_pred.error == "DETECTOR_UNAVAILABLE"
+
+            req_q.put(DetectRequest(1, 3, b"ok", 640, 480, False, 0.35, 640, 3.0, request_id=13))
+            r_ok = res_q.get(timeout=2.0)
+            assert r_ok.request_id == 13 and r_ok.ok is True and r_ok.count == 1
+
+            req_q.put(Shutdown())
+            t.join(timeout=2.0)
+
+    def test_bytetrack_tracker_hook_constructor_and_resets(self):
+        import pytest
+
+        pytest.importorskip("numpy")
+        sv = pytest.importorskip("supervision")
+        from app.detection.tracker import ByteTrackTrackerHook
+
+        init_calls: list[dict] = []
+        reset_calls: list[int] = []
+
+        class _StubByteTrack:
+            def __init__(self, **kwargs):
+                init_calls.append(kwargs)
+                self._calls = 0
+
+            def update(self, detections, frame=None, timestamp=None):
+                import numpy as np
+                self._calls += 1
+                if len(detections) == 0:
+                    return sv.Detections.empty()
+                # Mark first box confirmed (id=1), second unconfirmed (id=-1)
+                ids = np.array([1 if i == 0 else -1 for i in range(len(detections))], dtype=int)
+                detections.tracker_id = ids
+                return detections
+
+            def reset(self):
+                reset_calls.append(1)
+
+        hook = ByteTrackTrackerHook(
+            frame_rate=3.0,
+            track_activation_threshold=0.35,
+            inactivity_reset_s=30.0,
+            tracker_cls=_StubByteTrack,
+        )
+        boxes = [(0.1, 0.1, 0.2, 0.2, 0.9), (0.3, 0.3, 0.4, 0.4, 0.4)]
+        tracked = hook.update(7, boxes, now_s=100.0)
+        assert init_calls == [{"frame_rate": 3.0, "track_activation_threshold": 0.35}]
+        assert len(tracked) == 1  # confirmed track only
+
+        # Explicit reset + 30s inactivity gap
+        hook.update(7, boxes, now_s=101.0, reset=True)
+        assert hook.reset_count_by_source[7] == 1
+        hook.update(7, boxes, now_s=132.0)
+        assert hook.reset_count_by_source[7] == 2
+        assert len(reset_calls) == 2
+
+    def test_no_torch_still_not_imported_in_main_process(self):
+        assert "torch" not in sys.modules
 
