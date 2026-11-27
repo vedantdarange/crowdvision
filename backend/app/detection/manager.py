@@ -1,44 +1,50 @@
-"""app/detection/manager.py — DetectionManager skeleton (plan §8.2 / §9 B3).
-
-Provides `ingest_count(source_id, count, now)` as the single entry point
-shared by `fake-feed` (B3) and the real detector worker pump (B5).
-"""
+"""app/detection/manager.py — DetectionManager wiring ZoneEngine + AlertService (plan §8.2 / §9 B4)."""
 from __future__ import annotations
 
+import threading
 from datetime import datetime
 from typing import Any
 
 from app.core.clock import Clock, SystemClock
 from app.core.errors import NotFound
+from app.core.time import to_iso_z
 from app.detection.detector import Detector, FakeDetector
-from app.engine.zone_engine import StubZoneEngine
+from app.engine.zone_engine import ZoneEngine
 from app.realtime.emitter import RealtimeEmitter
+from app.realtime.tasks import SourceStatusTracker
 from app.repositories.source_repo import SourceRepository
 from app.repositories.zone_repo import ZoneRepository
-from app.schemas.serializers import serialize_source
+from app.services.alert_service import AlertService
+from app.services.engine_sync import format_zone_live_state, reload_engine_from_db
 from app.services.settings_service import SettingsService
 
 
 class DetectionManager:
-    """Coordinates detection results, engine ingestion, and realtime emission."""
+    """Coordinates detection counts -> ZoneEngine -> AlertService.apply -> realtime."""
 
     def __init__(
         self,
         *,
         detector: Detector | None = None,
-        engine: StubZoneEngine,
+        zone_engine: ZoneEngine,
+        engine_lock: threading.Lock,
+        alert_service: AlertService,
         emitter: RealtimeEmitter,
         zone_repo: ZoneRepository,
         source_repo: SourceRepository,
         settings_service: SettingsService,
+        source_status_tracker: SourceStatusTracker,
         clock: Clock | None = None,
     ) -> None:
         self.detector: Detector = detector or FakeDetector()
-        self.engine = engine
+        self.engine = zone_engine
+        self._engine_lock = engine_lock
+        self._alert_service = alert_service
         self.emitter = emitter
         self._zone_repo = zone_repo
         self._source_repo = source_repo
         self._settings = settings_service
+        self._source_status_tracker = source_status_tracker
         self._clock: Clock = clock or SystemClock()
 
     def ingest_count(
@@ -46,11 +52,12 @@ class DetectionManager:
         source_id: int,
         count: int,
         now: datetime | None = None,
+        *,
+        reset: bool = False,
     ) -> dict[str, Any]:
-        """Ingest a person count for *source_id*, update engine state, and emit updates.
+        """Ingest one count reading for *source_id* through ZoneEngine + AlertService.
 
-        Shared entry point for both `fake-feed` (B3) and real worker results (B5).
-        Must be called within a Flask `app_context()`.
+        Shared single entry point for both `fake-feed` (B3) and real worker frames (B5).
         """
         ts = now or self._clock.utcnow()
         source = self._source_repo.get(source_id)
@@ -61,45 +68,37 @@ class DetectionManager:
         if zone is None or not zone.is_active:
             raise NotFound(f"Active zone {source.zone_id} not found.")
 
-        zone_cfg = {
-            "id": zone.id,
-            "mode": zone.mode,
-            "warning_density": zone.warning_density,
-            "critical_density": zone.critical_density,
-            "warning_count": zone.warning_count,
-            "critical_count": zone.critical_count,
-        }
-        source_cfg = {
-            "id": source.id,
-            "zone_id": source.zone_id,
-            "coverage_area_m2": source.coverage_area_m2,
-        }
+        with self._engine_lock:
+            # Ensure ZoneEngine knows about this source/zone (preserving existing buffers)
+            if (
+                source.id not in self.engine._sources
+                or zone.id not in self.engine._zones
+            ):
+                reload_engine_from_db(
+                    zone_engine=self.engine,
+                    zone_repo=self._zone_repo,
+                    source_repo=self._source_repo,
+                    settings_service=self._settings,
+                )
 
-        # Forward to engine stub (# TEMPORARY until B4)
-        live_state = self.engine.ingest(
-            source_id,
-            count,
-            ts,
-            zone_cfg=zone_cfg,
-            source_cfg=source_cfg,
-        )
+            actions = self.engine.ingest(source_id, count, ts, reset=reset)
+            effects = self._alert_service.persist_actions(
+                actions, zone_engine=self.engine
+            )
+            eng_state = self.engine.get_zone_state(zone.id, ts)
+            src_state = self.engine.get_source_state(source.id, ts)
 
-        # Build serialized sources + open alert for ZoneState
-        stale_after_s = float(self._settings.get_settings().get("stale_after_s", 10.0))
-        zone_sources = self._source_repo.list_by_zone(zone.id, include_inactive=False)
-        serialized_sources = []
-        for src in zone_sources:
-            st, last_at = self.engine.get_source_status(src.id, ts, stale_after_s=stale_after_s)
-            serialized_sources.append(serialize_source(src, status=st, last_frame_at=last_at))
+        # Post-commit realtime dispatch OUTSIDE lock
+        self._alert_service.dispatch_side_effects(effects)
 
-        open_alert_id = self._zone_repo.get_open_alert_id(zone.id)
+        if src_state is not None and self._source_status_tracker.check_and_record(
+            source.id, src_state["status"]
+        ):
+            self.emitter.emit_source_status(
+                source.id,
+                source.zone_id,
+                src_state["status"],
+                to_iso_z(src_state["last_frame_at"]),
+            )
 
-        # Emit realtime updates (throttled per zone)
-        self.emitter.emit_zone_update(zone, live_state)
-        self.emitter.emit_zone_detail(
-            zone,
-            live_state,
-            sources=serialized_sources,
-            open_alert_id=open_alert_id,
-        )
-        return live_state
+        return format_zone_live_state(eng_state)

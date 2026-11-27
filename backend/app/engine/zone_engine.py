@@ -6,8 +6,6 @@ Coordinates:
   -> alert_rules (actions out).
 
 No Flask, SQLAlchemy, sockets, or threading imports in ZoneEngine.
-(`StubZoneEngine` is temporarily re-exported from `_stub_b3` until B4b swaps
-container/services to `ZoneEngine`.)
 """
 from __future__ import annotations
 
@@ -15,7 +13,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.engine._stub_b3 import StubZoneEngine  # TEMPORARY until B4b
 from app.engine.alert_rules import (
     AutoClearAlert,
     ClearCondition,
@@ -44,7 +41,6 @@ __all__ = [
     "ZoneConfig",
     "SourceConfig",
     "ZoneEngine",
-    "StubZoneEngine",
 ]
 
 _UNSET: Any = object()
@@ -167,6 +163,14 @@ class ZoneEngine:
     @property
     def settings(self) -> EngineSettings:
         return self._settings
+
+    def reset(self) -> None:
+        """Clear all runtime zones, sources, and alert snapshots."""
+        self._zones.clear()
+        self._sources.clear()
+        self._open_alerts.clear()
+        self._pending_reraises.clear()
+        self._next_alert_id = 1
 
     # ------------------------------------------------------------------
     # Boot & reload lifecycle

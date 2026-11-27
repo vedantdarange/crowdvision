@@ -7,7 +7,7 @@ Every route in the API is listed in ROUTE_MATRIX with its required role level:
   - 'police'  : police or admin
   - 'admin'   : admin only
 
-As new routes are added in B3+, append them to ROUTE_MATRIX.
+As new routes are added in B5+, append them to ROUTE_MATRIX.
 """
 from __future__ import annotations
 
@@ -70,6 +70,7 @@ ROUTE_MATRIX: list[tuple[str, str, str, dict[str, Any] | None]] = [
     # --- B2 Zones ---
     ("GET", "/api/v1/zones/live", "public", None),
     ("GET", "/api/v1/zones/{zone_id}/public", "public", None),
+    ("GET", "/api/v1/zones/{zone_id}/history", "police", None),
     ("GET", "/api/v1/zones", "police", None),
     ("GET", "/api/v1/zones/{zone_id}", "police", None),
     ("POST", "/api/v1/zones", "admin", _ZONE_BODY),
@@ -85,6 +86,16 @@ ROUTE_MATRIX: list[tuple[str, str, str, dict[str, Any] | None]] = [
     ("GET", "/api/v1/help-info", "public", None),
     ("GET", "/api/v1/settings", "admin", None),
     ("PATCH", "/api/v1/settings", "admin", {"target_fps": 3}),
+    # --- B4b Alerts ---
+    ("GET", "/api/v1/alerts", "police", None),
+    ("GET", "/api/v1/alerts/{alert_id}", "police", None),
+    ("POST", "/api/v1/alerts/{alert_id}/acknowledge", "police", {"note": "ack"}),
+    ("POST", "/api/v1/alerts/{alert_id}/respond", "police", {"note": "resp"}),
+    ("POST", "/api/v1/alerts/{alert_id}/resolve", "police", {"note": "res"}),
+    # --- B4b Advisories ---
+    ("GET", "/api/v1/advisories", "public", None),
+    ("POST", "/api/v1/advisories", "police", {"title": "Notice", "body": "Clear", "severity": "INFO"}),
+    ("DELETE", "/api/v1/advisories/{advisory_id}", "police", None),
 ]
 
 _ALLOWED_ROLES = {
@@ -100,6 +111,10 @@ def test_route_role_matrix(
 ):
     from flask_jwt_extended import create_refresh_token
 
+    from app.core.time import utcnow
+    from app.extensions import db
+    from app.models.models import Advisory, AlertModel
+
     citizen = make_user(
         name="Cit", email="citizen@test.local", password="Password@123", role="citizen"
     )
@@ -113,12 +128,22 @@ def test_route_role_matrix(
         "admin": token_for(admin.id, role="admin"),
     }
 
-    # Create seed zone / source when needed by route template or body
     zone_id = 1
     source_id = 1
-    needs_zone = "{zone_id}" in path_tpl or (body and body.get("zone_id") == "{zone_id}")
+    alert_id = 1
+    advisory_id = 1
+
+    needs_zone = (
+        "{zone_id}" in path_tpl
+        or (body and body.get("zone_id") == "{zone_id}")
+        or "{source_id}" in path_tpl
+        or "{alert_id}" in path_tpl
+    )
     needs_source = "{source_id}" in path_tpl
-    if needs_zone or needs_source:
+    needs_alert = "{alert_id}" in path_tpl
+    needs_advisory = "{advisory_id}" in path_tpl
+
+    if needs_zone:
         r_z = client.post(
             "/api/v1/zones",
             json={**_ZONE_BODY, "name": "RM Seed Zone"},
@@ -136,7 +161,46 @@ def test_route_role_matrix(
         assert r_s.status_code == 201
         source_id = r_s.get_json()["data"]["id"]
 
-    path = path_tpl.format(target_id=target.id, zone_id=zone_id, source_id=source_id)
+    if needs_alert:
+        with app.app_context():
+            now_naive = utcnow().replace(tzinfo=None)
+            a = AlertModel(  # pyrefly: ignore[unexpected-keyword]
+                zone_id=zone_id,
+                level="WARNING",
+                peak_level="WARNING",
+                status="NEW",
+                condition_active=True,
+                peak_density=3.2,
+                peak_count=4.0,
+                created_at=now_naive,
+            )
+            db.session.add(a)
+            db.session.commit()
+            alert_id = a.id
+
+    if needs_advisory:
+        with app.app_context():
+            now_naive = utcnow().replace(tzinfo=None)
+            adv = Advisory(  # pyrefly: ignore[unexpected-keyword]
+                title="RM Adv",
+                body="Seed adv",
+                severity="INFO",
+                zone_id=None,
+                created_by=police.id,
+                created_at=now_naive,
+                is_active=True,
+            )
+            db.session.add(adv)
+            db.session.commit()
+            advisory_id = adv.id
+
+    path = path_tpl.format(
+        target_id=target.id,
+        zone_id=zone_id,
+        source_id=source_id,
+        alert_id=alert_id,
+        advisory_id=advisory_id,
+    )
     resolved_body = dict(body) if body is not None else None
     if resolved_body and resolved_body.get("zone_id") == "{zone_id}":
         resolved_body["zone_id"] = zone_id
@@ -162,12 +226,10 @@ def test_route_role_matrix(
         assert r_ok.status_code == 200
         return
 
-    # 1. Missing token -> 401 UNAUTHENTICATED
     r_unauth = client.open(path, method=method, json=resolved_body)
     assert r_unauth.status_code == 401, f"{method} {path} no token: {r_unauth.status_code}"
     assert r_unauth.get_json()["error"]["code"] == "UNAUTHENTICATED"
 
-    # 2. Check every role (test disallowed roles before allowed ones so DELETE doesn't remove resource early)
     allowed = _ALLOWED_ROLES[level]
     ordered_roles = [r for r in tokens_by_role if r not in allowed] + [
         r for r in tokens_by_role if r in allowed
@@ -175,9 +237,15 @@ def test_route_role_matrix(
     for role_name in ordered_roles:
         tok = tokens_by_role[role_name]
         req_body = dict(resolved_body) if resolved_body is not None else None
-        # Keep POST body unique across multiple allowed roles (e.g. police + admin)
         if method == "POST" and path == "/api/v1/sources" and req_body is not None:
             req_body["name"] = f"Cam RM {role_name}"
+        # Re-create active advisory between police & admin DELETE calls so both 204
+        if method == "DELETE" and "/advisories/" in path and role_name == "admin":
+            with app.app_context():
+                adv_row = db.session.get(Advisory, advisory_id)
+                if adv_row is not None:
+                    adv_row.is_active = True
+                    db.session.commit()
         resp = client.open(
             path,
             method=method,
@@ -188,8 +256,6 @@ def test_route_role_matrix(
             assert resp.status_code in (200, 201, 204), (
                 f"{method} {path} as {role_name}: expected success, got {resp.status_code} {resp.get_json()}"
             )
-            # If this was DELETE and another allowed role exists, we'd need a new resource,
-            # though DELETE is admin-only so there is only 1 allowed role.
         else:
             assert resp.status_code == 403, (
                 f"{method} {path} as {role_name}: expected 403, got {resp.status_code}"

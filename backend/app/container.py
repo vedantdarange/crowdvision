@@ -1,10 +1,12 @@
 """app/container.py — Dependency injection wiring.
 
-Builds repositories, services, engine stub, emitter, and detection manager,
-and attaches the Container instance to flask_app.extensions['container'] inside create_app().
+Builds repositories, services, pure ZoneEngine, lock, emitter, notifier,
+background task state, and DetectionManager, attaching Container to
+`flask_app.extensions['container']`.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
 from flask import Flask, current_app
@@ -12,15 +14,23 @@ from flask import Flask, current_app
 from app.core.clock import Clock, SystemClock
 from app.detection.detector import FakeDetector
 from app.detection.manager import DetectionManager
-from app.engine.zone_engine import StubZoneEngine
+from app.engine.zone_engine import ZoneEngine
+from app.push.notifier import NoOpNotifier, Notifier
 from app.realtime.emitter import RealtimeEmitter
+from app.realtime.tasks import BackgroundSchedulerState, SourceStatusTracker
+from app.repositories.advisory_repo import AdvisoryRepository
+from app.repositories.alert_repo import AlertRepository
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.settings_repo import SettingsRepository
 from app.repositories.source_repo import SourceRepository
 from app.repositories.user_repo import UserRepository
 from app.repositories.zone_repo import ZoneRepository
+from app.repositories.zone_sample_repo import ZoneSampleRepository
+from app.services.advisory_service import AdvisoryService
+from app.services.alert_service import AlertService
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
+from app.services.engine_sync import reload_engine_from_db
 from app.services.settings_service import SettingsService
 from app.services.source_service import SourceService
 from app.services.user_service import UserService
@@ -30,69 +40,144 @@ from app.services.zone_service import ZoneService
 @dataclass(frozen=True)
 class Container:
     clock: Clock
+    engine_lock: threading.Lock
     user_repo: UserRepository
     audit_repo: AuditRepository
     zone_repo: ZoneRepository
     source_repo: SourceRepository
     settings_repo: SettingsRepository
+    alert_repo: AlertRepository
+    advisory_repo: AdvisoryRepository
+    zone_sample_repo: ZoneSampleRepository
     audit_service: AuditService
     auth_service: AuthService
     user_service: UserService
     zone_service: ZoneService
     source_service: SourceService
     settings_service: SettingsService
-    engine: StubZoneEngine
+    alert_service: AlertService
+    advisory_service: AdvisoryService
+    zone_engine: ZoneEngine
     emitter: RealtimeEmitter
+    notifier: Notifier
+    source_status_tracker: SourceStatusTracker
+    task_state: BackgroundSchedulerState
     detection_manager: DetectionManager
 
 
 def wire(flask_app: Flask) -> Container:
     """Instantiate repositories, services, engine, and bind them to *flask_app*."""
     clock = SystemClock()
+    engine_lock = threading.Lock()
+
     user_repo = UserRepository()
     audit_repo = AuditRepository()
     zone_repo = ZoneRepository()
     source_repo = SourceRepository()
     settings_repo = SettingsRepository()
+    alert_repo = AlertRepository()
+    advisory_repo = AdvisoryRepository()
+    zone_sample_repo = ZoneSampleRepository()
 
-    engine = StubZoneEngine()  # TEMPORARY until B4
+    zone_engine = ZoneEngine(auto_commit_alerts=False)
     emitter = RealtimeEmitter(clock=clock)
+    notifier = NoOpNotifier()
+    source_status_tracker = SourceStatusTracker()
+    task_state = BackgroundSchedulerState()
 
     audit_service = AuditService(audit_repo)
     auth_service = AuthService(user_repo)
     user_service = UserService(user_repo, audit_service)
     settings_service = SettingsService(settings_repo, audit_service)
+
+    def _reload_on_settings_change() -> None:
+        with engine_lock:
+            reload_engine_from_db(
+                zone_engine=zone_engine,
+                zone_repo=zone_repo,
+                source_repo=source_repo,
+                settings_service=settings_service,
+            )
+
+    settings_service.set_on_change_callback(_reload_on_settings_change)
+
     zone_service = ZoneService(
-        zone_repo, source_repo, audit_service, settings_service, engine=engine
+        zone_repo,
+        source_repo,
+        audit_service,
+        settings_service,
+        zone_sample_repo=zone_sample_repo,
+        zone_engine=zone_engine,
+        engine_lock=engine_lock,
+        clock=clock,
     )
     source_service = SourceService(
-        source_repo, zone_repo, audit_service, engine=engine, clock=clock
+        source_repo,
+        zone_repo,
+        audit_service,
+        settings_service=settings_service,
+        zone_engine=zone_engine,
+        engine_lock=engine_lock,
+        clock=clock,
+    )
+    alert_service = AlertService(
+        alert_repo=alert_repo,
+        zone_repo=zone_repo,
+        source_repo=source_repo,
+        user_repo=user_repo,
+        audit_service=audit_service,
+        settings_service=settings_service,
+        emitter=emitter,
+        notifier=notifier,
+        clock=clock,
+        engine_lock=engine_lock,
+        zone_engine=zone_engine,
+    )
+    advisory_service = AdvisoryService(
+        advisory_repo=advisory_repo,
+        zone_repo=zone_repo,
+        user_repo=user_repo,
+        audit_service=audit_service,
+        emitter=emitter,
+        clock=clock,
     )
     detection_manager = DetectionManager(
         detector=FakeDetector(),
-        engine=engine,
+        zone_engine=zone_engine,
+        engine_lock=engine_lock,
+        alert_service=alert_service,
         emitter=emitter,
         zone_repo=zone_repo,
         source_repo=source_repo,
         settings_service=settings_service,
+        source_status_tracker=source_status_tracker,
         clock=clock,
     )
 
     container = Container(
         clock=clock,
+        engine_lock=engine_lock,
         user_repo=user_repo,
         audit_repo=audit_repo,
         zone_repo=zone_repo,
         source_repo=source_repo,
         settings_repo=settings_repo,
+        alert_repo=alert_repo,
+        advisory_repo=advisory_repo,
+        zone_sample_repo=zone_sample_repo,
         audit_service=audit_service,
         auth_service=auth_service,
         user_service=user_service,
         zone_service=zone_service,
         source_service=source_service,
         settings_service=settings_service,
-        engine=engine,
+        alert_service=alert_service,
+        advisory_service=advisory_service,
+        zone_engine=zone_engine,
         emitter=emitter,
+        notifier=notifier,
+        source_status_tracker=source_status_tracker,
+        task_state=task_state,
         detection_manager=detection_manager,
     )
     flask_app.extensions["container"] = container

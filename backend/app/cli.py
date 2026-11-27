@@ -325,6 +325,7 @@ def register_commands(app: Flask) -> None:
                     source_id=source_id,
                     speed=speed,
                     container=container,
+                    clock=container.clock if serve else None,
                     on_step=_printer,
                 )
 

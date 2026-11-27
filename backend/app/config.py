@@ -68,6 +68,7 @@ class Settings:
     report_retention_days: int
     rate_limit_register: str
     rate_limit_login: str
+    werkzeug_run_main: str | None = None
     app_version: str = "0.1.0"
     contract_version: str = "1.1.0"
 
@@ -103,6 +104,7 @@ def load_settings() -> Settings:
         report_retention_days=_int("REPORT_RETENTION_DAYS", 30),
         rate_limit_register=os.environ.get("RATE_LIMIT_REGISTER", "10/hour"),
         rate_limit_login=os.environ.get("RATE_LIMIT_LOGIN", "20/minute"),
+        werkzeug_run_main=os.environ.get("WERKZEUG_RUN_MAIN"),
     )
 
 

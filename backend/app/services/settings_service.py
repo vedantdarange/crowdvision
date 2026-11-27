@@ -80,6 +80,11 @@ class SettingsService:
     def __init__(self, settings_repo: SettingsRepository, audit_service: AuditService) -> None:
         self._repo = settings_repo
         self._audit = audit_service
+        self._on_change: Any = None
+
+    def set_on_change_callback(self, callback: Any) -> None:
+        """Register an optional hook invoked after settings are committed (e.g. engine reload)."""
+        self._on_change = callback
 
     def get_settings(self) -> dict[str, Any]:
         """Return merged Settings dict per contract §5 (code defaults + DB overrides)."""
@@ -123,6 +128,8 @@ class SettingsService:
             self._repo.set_many(validated)
             self._audit.log(actor, "SETTINGS_UPDATED", "settings", None, validated)
             db.session.commit()
+            if self._on_change is not None:
+                self._on_change()
         return self.get_settings()
 
     def get_config(self) -> dict[str, Any]:
