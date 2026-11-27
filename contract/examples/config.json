@@ -1,0 +1,9 @@
+{
+  "target_fps": 3,
+  "frame_width": 640,
+  "jpeg_quality": 0.7,
+  "stale_after_s": 10,
+  "vapid_public_key": null,
+  "app_version": "0.0.0-mock",
+  "contract_version": "1.1.0"
+}

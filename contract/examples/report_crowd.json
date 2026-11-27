@@ -1,0 +1,21 @@
+{
+  "id": 46,
+  "kind": "CROWD",
+  "status": "PENDING",
+  "zone_id": 1,
+  "zone_name": "Main Gate",
+  "lat": 18.5195,
+  "lng": 73.8553,
+  "count": 14,
+  "density_hint": 0.35,
+  "sos_type": null,
+  "note": "Queue near the entrance.",
+  "created_by": {
+    "id": 4,
+    "name": "Kiran Shah"
+  },
+  "created_at": "2026-11-24T10:15:30Z",
+  "reviewed_by": null,
+  "reviewed_at": null,
+  "review_note": null
+}

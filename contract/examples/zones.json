@@ -1,0 +1,196 @@
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Main Gate",
+      "description": "Ganesh festival demonstration venue, Pune",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              73.85527000784715,
+              18.519471560972526
+            ],
+            [
+              73.85532999215285,
+              18.519471560972526
+            ],
+            [
+              73.85532999215285,
+              18.519528439027475
+            ],
+            [
+              73.85527000784715,
+              18.519528439027475
+            ],
+            [
+              73.85527000784715,
+              18.519471560972526
+            ]
+          ]
+        ]
+      },
+      "centroid": {
+        "lat": 18.5195,
+        "lng": 73.8553
+      },
+      "area_m2": 40,
+      "mode": "COUNT",
+      "warning_density": 3,
+      "critical_density": 4,
+      "warning_count": 3,
+      "critical_count": 5,
+      "is_active": true,
+      "created_at": "2026-11-24T10:15:30Z",
+      "updated_at": "2026-11-24T10:15:30Z",
+      "level": "NO_DATA",
+      "trend": "STEADY",
+      "count": null,
+      "density": null,
+      "sources": [
+        {
+          "id": 1,
+          "zone_id": 1,
+          "name": "Main Gate camera",
+          "kind": "WEBCAM",
+          "coverage_area_m2": 25,
+          "is_active": true,
+          "status": "OFFLINE",
+          "last_frame_at": null,
+          "created_at": "2026-11-24T10:15:30Z"
+        }
+      ],
+      "open_alert_id": null,
+      "live_updated_at": null
+    },
+    {
+      "id": 2,
+      "name": "Stage Area",
+      "description": "Ganesh festival demonstration venue, Pune",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              73.8552480519156,
+              18.519950742159494
+            ],
+            [
+              73.8553519480844,
+              18.519950742159494
+            ],
+            [
+              73.8553519480844,
+              18.520049257840505
+            ],
+            [
+              73.8552480519156,
+              18.520049257840505
+            ],
+            [
+              73.8552480519156,
+              18.519950742159494
+            ]
+          ]
+        ]
+      },
+      "centroid": {
+        "lat": 18.52,
+        "lng": 73.8553
+      },
+      "area_m2": 120,
+      "mode": "COUNT",
+      "warning_density": 3,
+      "critical_density": 4,
+      "warning_count": 8,
+      "critical_count": 10,
+      "is_active": true,
+      "created_at": "2026-11-24T10:15:30Z",
+      "updated_at": "2026-11-24T10:15:30Z",
+      "level": "NO_DATA",
+      "trend": "STEADY",
+      "count": null,
+      "density": null,
+      "sources": [
+        {
+          "id": 2,
+          "zone_id": 2,
+          "name": "Stage Area camera",
+          "kind": "VIDEO_FILE",
+          "coverage_area_m2": 60,
+          "is_active": true,
+          "status": "OFFLINE",
+          "last_frame_at": null,
+          "created_at": "2026-11-24T10:15:30Z"
+        }
+      ],
+      "open_alert_id": 12,
+      "live_updated_at": null
+    },
+    {
+      "id": 3,
+      "name": "Exit Lane",
+      "description": "Ganesh festival demonstration venue, Pune",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              73.85527628898264,
+              18.520477516974687
+            ],
+            [
+              73.85532371101736,
+              18.520477516974687
+            ],
+            [
+              73.85532371101736,
+              18.520522483025317
+            ],
+            [
+              73.85527628898264,
+              18.520522483025317
+            ],
+            [
+              73.85527628898264,
+              18.520477516974687
+            ]
+          ]
+        ]
+      },
+      "centroid": {
+        "lat": 18.520500000000002,
+        "lng": 73.8553
+      },
+      "area_m2": 25,
+      "mode": "DENSITY",
+      "warning_density": 3,
+      "critical_density": 4,
+      "warning_count": null,
+      "critical_count": null,
+      "is_active": true,
+      "created_at": "2026-11-24T10:15:30Z",
+      "updated_at": "2026-11-24T10:15:30Z",
+      "level": "NO_DATA",
+      "trend": "STEADY",
+      "count": null,
+      "density": null,
+      "sources": [
+        {
+          "id": 3,
+          "zone_id": 3,
+          "name": "Exit Lane camera",
+          "kind": "VIDEO_FILE",
+          "coverage_area_m2": 6,
+          "is_active": true,
+          "status": "OFFLINE",
+          "last_frame_at": null,
+          "created_at": "2026-11-24T10:15:30Z"
+        }
+      ],
+      "open_alert_id": null,
+      "live_updated_at": null
+    }
+  ]
+}

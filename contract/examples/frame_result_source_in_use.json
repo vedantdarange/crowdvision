@@ -1,0 +1,12 @@
+{
+  "source_id": 1,
+  "seq": 1,
+  "ok": false,
+  "count": 0,
+  "boxes": [],
+  "infer_ms": 45,
+  "smoothed_count": null,
+  "density": null,
+  "level": null,
+  "error": "SOURCE_IN_USE"
+}

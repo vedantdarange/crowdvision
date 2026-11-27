@@ -1,0 +1,54 @@
+{
+  "id": 12,
+  "zone_id": 2,
+  "zone_name": "Stage Area",
+  "location": {
+    "lat": 18.52,
+    "lng": 73.8553
+  },
+  "level": "CRITICAL",
+  "peak_level": "CRITICAL",
+  "status": "NEW",
+  "condition_active": false,
+  "peak_density": 0.2,
+  "peak_count": 12,
+  "created_at": "2026-11-24T10:15:30Z",
+  "acknowledged_at": null,
+  "acknowledged_by": null,
+  "responding_at": null,
+  "responding_by": null,
+  "resolved_at": null,
+  "resolved_by": null,
+  "resolution_note": null,
+  "condition_cleared_at": "2026-11-24T10:18:00Z",
+  "last_escalated_at": null,
+  "events": [
+    {
+      "id": 1,
+      "alert_id": 12,
+      "type": "CREATED",
+      "actor": null,
+      "data": {
+        "reason": "STILL_ACTIVE_AFTER_RESOLVE",
+        "previous_alert_id": 11
+      },
+      "created_at": "2026-11-24T10:15:30Z"
+    },
+    {
+      "id": 2,
+      "alert_id": 12,
+      "type": "FEED_LOST",
+      "actor": null,
+      "data": {},
+      "created_at": "2026-11-24T10:16:30Z"
+    },
+    {
+      "id": 3,
+      "alert_id": 12,
+      "type": "FEED_RESTORED",
+      "actor": null,
+      "data": {},
+      "created_at": "2026-11-24T10:17:30Z"
+    }
+  ]
+}

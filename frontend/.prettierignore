@@ -1,0 +1,4 @@
+node_modules
+dist
+package-lock.json
+scripts/.fixtures.generated.ts

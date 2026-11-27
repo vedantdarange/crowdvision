@@ -1,0 +1,36 @@
+{
+  "emergency_numbers": [
+    {
+      "label": "Unified emergency",
+      "number": "112"
+    },
+    {
+      "label": "Police",
+      "number": "100"
+    },
+    {
+      "label": "Ambulance",
+      "number": "102"
+    },
+    {
+      "label": "Fire",
+      "number": "101"
+    }
+  ],
+  "medical_points": [
+    {
+      "name": "First aid tent",
+      "lat": 18.52,
+      "lng": 73.8553,
+      "note": "Beside Stage Area"
+    }
+  ],
+  "exits": [
+    {
+      "name": "Exit Lane",
+      "lat": 18.520500000000002,
+      "lng": 73.8553,
+      "note": null
+    }
+  ]
+}
