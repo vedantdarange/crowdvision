@@ -29,10 +29,30 @@ export const routes: RouteObject[] = [
   {
     element: <PublicLayout />,
     children: [
-      page('/', 'Live map', 'F2'),
-      page('/zones/:id', 'Zone detail', 'F2'),
-      page('/advisories', 'Advisories', 'F2'),
-      page('/help', 'Help', 'F2'),
+      {
+        ...page('/', 'Live map', 'F2'),
+        lazy: async () => ({
+          Component: (await import('@/features/zones/PublicPages')).LiveMap,
+        }),
+      },
+      {
+        ...page('/zones/:id', 'Zone detail', 'F2'),
+        lazy: async () => ({
+          Component: (await import('@/features/zones/PublicPages')).ZoneDetail,
+        }),
+      },
+      {
+        ...page('/advisories', 'Advisories', 'F2'),
+        lazy: async () => ({
+          Component: (await import('@/features/zones/PublicPages')).Advisories,
+        }),
+      },
+      {
+        ...page('/help', 'Help', 'F2'),
+        lazy: async () => ({
+          Component: (await import('@/features/zones/PublicPages')).Help,
+        }),
+      },
       ...['/report/crowd', '/report/sos', '/my-reports'].map((path, i) => ({
         ...page(path, ['Crowd report', 'Send SOS', 'My reports'][i]!, 'F6'),
         handle: {

@@ -1,7 +1,8 @@
 import { useSession } from '@/features/auth';
 import seedUser from '../../contract/examples/user.json';
 import { afterEach, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render } from './renderPublic';
+import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, matchRoutes } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
