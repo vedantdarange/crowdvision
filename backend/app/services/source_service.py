@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.clock import Clock, SystemClock
 from app.core.errors import Forbidden, NotFound, ValidationAppError
 from app.core.time import utcnow
+from app.engine.zone_engine import StubZoneEngine
 from app.extensions import db
 from app.models.models import Source, User, Zone
 from app.repositories.source_repo import SourceRepository
@@ -20,10 +22,14 @@ class SourceService:
         source_repo: SourceRepository,
         zone_repo: ZoneRepository,
         audit_service: AuditService,
+        engine: StubZoneEngine | None = None,
+        clock: Clock | None = None,
     ) -> None:
         self._repo = source_repo
         self._zone_repo = zone_repo
         self._audit = audit_service
+        self._engine = engine
+        self._clock: Clock = clock or SystemClock()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -54,7 +60,15 @@ class SourceService:
         if zone_id is not None:
             self._get_active_zone_or_404(zone_id)
         sources = self._repo.list_all(zone_id=zone_id, include_inactive=False)
-        return [serialize_source(s) for s in sources]
+        if self._engine is None:
+            return [serialize_source(s) for s in sources]
+        now = self._clock.utcnow()
+        stale_after_s = 10.0
+        result = []
+        for s in sources:
+            st, last_at = self._engine.get_source_status(s.id, now, stale_after_s=stale_after_s)
+            result.append(serialize_source(s, status=st, last_frame_at=last_at))
+        return result
 
     # ------------------------------------------------------------------
     # Write

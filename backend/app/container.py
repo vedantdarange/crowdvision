@@ -1,7 +1,7 @@
 """app/container.py — Dependency injection wiring.
 
-Builds repositories and services and attaches the Container instance
-to flask_app.extensions['container'] inside create_app().
+Builds repositories, services, engine stub, emitter, and detection manager,
+and attaches the Container instance to flask_app.extensions['container'] inside create_app().
 """
 from __future__ import annotations
 
@@ -9,6 +9,11 @@ from dataclasses import dataclass
 
 from flask import Flask, current_app
 
+from app.core.clock import Clock, SystemClock
+from app.detection.detector import FakeDetector
+from app.detection.manager import DetectionManager
+from app.engine.zone_engine import StubZoneEngine
+from app.realtime.emitter import RealtimeEmitter
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.settings_repo import SettingsRepository
 from app.repositories.source_repo import SourceRepository
@@ -24,6 +29,7 @@ from app.services.zone_service import ZoneService
 
 @dataclass(frozen=True)
 class Container:
+    clock: Clock
     user_repo: UserRepository
     audit_repo: AuditRepository
     zone_repo: ZoneRepository
@@ -35,24 +41,45 @@ class Container:
     zone_service: ZoneService
     source_service: SourceService
     settings_service: SettingsService
+    engine: StubZoneEngine
+    emitter: RealtimeEmitter
+    detection_manager: DetectionManager
 
 
 def wire(flask_app: Flask) -> Container:
-    """Instantiate repositories & services and bind them to *flask_app*."""
+    """Instantiate repositories, services, engine, and bind them to *flask_app*."""
+    clock = SystemClock()
     user_repo = UserRepository()
     audit_repo = AuditRepository()
     zone_repo = ZoneRepository()
     source_repo = SourceRepository()
     settings_repo = SettingsRepository()
 
+    engine = StubZoneEngine()  # TEMPORARY until B4
+    emitter = RealtimeEmitter(clock=clock)
+
     audit_service = AuditService(audit_repo)
     auth_service = AuthService(user_repo)
     user_service = UserService(user_repo, audit_service)
     settings_service = SettingsService(settings_repo, audit_service)
-    zone_service = ZoneService(zone_repo, source_repo, audit_service, settings_service)
-    source_service = SourceService(source_repo, zone_repo, audit_service)
+    zone_service = ZoneService(
+        zone_repo, source_repo, audit_service, settings_service, engine=engine
+    )
+    source_service = SourceService(
+        source_repo, zone_repo, audit_service, engine=engine, clock=clock
+    )
+    detection_manager = DetectionManager(
+        detector=FakeDetector(),
+        engine=engine,
+        emitter=emitter,
+        zone_repo=zone_repo,
+        source_repo=source_repo,
+        settings_service=settings_service,
+        clock=clock,
+    )
 
     container = Container(
+        clock=clock,
         user_repo=user_repo,
         audit_repo=audit_repo,
         zone_repo=zone_repo,
@@ -64,6 +91,9 @@ def wire(flask_app: Flask) -> Container:
         zone_service=zone_service,
         source_service=source_service,
         settings_service=settings_service,
+        engine=engine,
+        emitter=emitter,
+        detection_manager=detection_manager,
     )
     flask_app.extensions["container"] = container
     return container

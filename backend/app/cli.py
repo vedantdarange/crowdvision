@@ -3,6 +3,7 @@
 Commands:
   flask seed-demo       Create seed users, zones, sources, settings, help_info.
   flask set-password    Change a user's password interactively.
+  flask fake-feed       Drive a zone with scripted FakeDetector counts (B3).
 """
 from __future__ import annotations
 
@@ -278,3 +279,70 @@ def register_commands(app: Flask) -> None:
             user.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             db.session.commit()
             click.echo(f"Password updated for {email}.")
+
+    @app.cli.command("fake-feed")
+    @click.option("--zone", "zone_id", type=int, required=True, help="Target zone ID.")
+    @click.option(
+        "--profile",
+        type=click.Choice(["ramp", "spike", "flap", "offline"], case_sensitive=False),
+        required=True,
+        help="Scripted profile to run.",
+    )
+    @click.option("--source", "source_id", type=int, default=None, help="Optional source ID (defaults to zone's first active source).")
+    @click.option("--speed", type=float, default=1.0, show_default=True, help="Playback speed multiplier (e.g. 2.0 runs 2x faster).")
+    @click.option("--serve", is_flag=True, default=False, help="Also serve Flask+Socket.IO in this process so live clients receive events.")
+    @click.option("--port", type=int, default=5000, show_default=True, help="HTTP/Socket.IO port when --serve is used.")
+    def fake_feed_cmd(
+        zone_id: int,
+        profile: str,
+        source_id: int | None,
+        speed: float,
+        serve: bool,
+        port: int,
+    ) -> None:
+        """Emit scripted crowd counts for a zone using FakeDetector -> DetectionManager."""
+        from scripts.fake_feed import run_fake_feed
+
+        profile_norm = profile.lower()
+        if speed <= 0:
+            click.echo("ERROR: --speed must be > 0.", err=True)
+            raise SystemExit(1)
+
+        def _printer(step: int, total: int, count: int, state: dict) -> None:  # type: ignore[type-arg]
+            click.echo(
+                f"  [{step}/{total}] zone={zone_id} count={count} "
+                f"density={state['density']} level={state['level']} trend={state['trend']}"
+            )
+
+        def _exec() -> None:
+            with app.app_context():
+                container = app.extensions["container"]
+                if profile_norm == "offline":
+                    click.echo(f"Profile 'offline' for zone={zone_id}: sending 0 frames (zone remains/goes NO_DATA).")
+                run_fake_feed(
+                    zone_id=zone_id,
+                    profile=profile_norm,
+                    source_id=source_id,
+                    speed=speed,
+                    container=container,
+                    on_step=_printer,
+                )
+
+        if not serve:
+            try:
+                _exec()
+            except Exception as exc:
+                click.echo(f"ERROR: {exc}", err=True)
+                raise SystemExit(1) from exc
+            click.echo("fake-feed complete.")
+            return
+
+        from app.extensions import socketio
+
+        def _bg() -> None:
+            socketio.sleep(1.0)
+            _exec()
+
+        click.echo(f"Serving Flask+Socket.IO on http://127.0.0.1:{port} with fake-feed ({profile_norm})...")
+        socketio.start_background_task(_bg)
+        socketio.run(app, host="127.0.0.1", port=port, allow_unsafe_werkzeug=True)
