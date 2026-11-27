@@ -252,14 +252,14 @@ class TestTokenDbFreshness:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         with probe_app.app_context():
             db.create_all()
-            user = User(
-                name="Demote Target",
-                email="demote@example.com",
-                password_hash=PasswordHasher().hash("Pass@1234"),
-                role="admin",
-                is_active=True,
-                created_at=now,
-                updated_at=now,
+            user = User(  # pyrefly: ignore[unexpected-keyword]
+                name="Demote Target",  # pyrefly: ignore[unexpected-keyword]
+                email="demote@example.com",  # pyrefly: ignore[unexpected-keyword]
+                password_hash=PasswordHasher().hash("Pass@1234"),  # pyrefly: ignore[unexpected-keyword]
+                role="admin",  # pyrefly: ignore[unexpected-keyword]
+                is_active=True,  # pyrefly: ignore[unexpected-keyword]
+                created_at=now,  # pyrefly: ignore[unexpected-keyword]
+                updated_at=now,  # pyrefly: ignore[unexpected-keyword]
             )
             db.session.add(user)
             db.session.commit()

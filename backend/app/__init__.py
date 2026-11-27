@@ -122,6 +122,9 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
         flask_app,
         resources={r"/api/*": {"origins": current_settings.cors_origins}},
     )
+    from app.realtime.connect import register_socketio_handlers
+
+    register_socketio_handlers()
     socketio.init_app(
         flask_app,
         async_mode="threading",
@@ -137,12 +140,18 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     # Blueprints
     # -----------------------------------------------------------------------
     from app.api.v1.auth import auth_bp
+    from app.api.v1.config import config_bp
     from app.api.v1.health import health_bp
+    from app.api.v1.sources import sources_bp
     from app.api.v1.users import users_bp
+    from app.api.v1.zones import zones_bp
 
     flask_app.register_blueprint(health_bp, url_prefix="/api/v1")
     flask_app.register_blueprint(auth_bp, url_prefix="/api/v1/auth")
     flask_app.register_blueprint(users_bp, url_prefix="/api/v1/users")
+    flask_app.register_blueprint(zones_bp, url_prefix="/api/v1")
+    flask_app.register_blueprint(sources_bp, url_prefix="/api/v1")
+    flask_app.register_blueprint(config_bp, url_prefix="/api/v1")
 
     # -----------------------------------------------------------------------
     # CLI commands
