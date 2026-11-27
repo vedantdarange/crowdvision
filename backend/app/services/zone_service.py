@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.errors import Conflict, Forbidden, NotFound, ValidationAppError
 from app.core.geometry import polygon_area_m2, polygon_centroid
 from app.core.time import utcnow
+from app.engine.zone_engine import StubZoneEngine
 from app.extensions import db
 from app.models.models import User, Zone
 from app.repositories.source_repo import SourceRepository
@@ -31,11 +32,13 @@ class ZoneService:
         source_repo: SourceRepository,
         audit_service: AuditService,
         settings_service: SettingsService,
+        engine: StubZoneEngine | None = None,
     ) -> None:
         self._repo = zone_repo
         self._source_repo = source_repo
         self._audit = audit_service
         self._settings = settings_service
+        self._engine = engine
 
     # ------------------------------------------------------------------
     # Helpers
@@ -85,18 +88,40 @@ class ZoneService:
 
         return server_area, centroid_lat, centroid_lng
 
+    def _live_state_for(self, zone_id: int) -> dict[str, Any]:
+        if self._engine is not None:
+            st = self._engine.get_zone_live_state(zone_id)
+            if st is not None:
+                return st
+        return LIVE_STATE_PLACEHOLDER
+
     def _serialize_full(self, zone: Zone) -> dict[str, Any]:
-        sources = [serialize_source(s) for s in self._source_repo.list_by_zone(zone.id)]
+        now = utcnow()
+        stale_after_s = float(self._settings.get_settings().get("stale_after_s", 10.0))
+        sources = []
+        for s in self._source_repo.list_by_zone(zone.id):
+            if self._engine is not None:
+                status, last_at = self._engine.get_source_status(
+                    s.id, now, stale_after_s=stale_after_s
+                )
+                sources.append(serialize_source(s, status=status, last_frame_at=last_at))
+            else:
+                sources.append(serialize_source(s))
         open_alert_id = self._repo.get_open_alert_id(zone.id)
-        return serialize_zone(zone, LIVE_STATE_PLACEHOLDER, sources=sources, open_alert_id=open_alert_id)
+        return serialize_zone(
+            zone,
+            self._live_state_for(zone.id),
+            sources=sources,
+            open_alert_id=open_alert_id,
+        )
 
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
     def get_live(self) -> list[dict[str, Any]]:
-        """Return all active zones as PublicZoneState (all NO_DATA in B2)."""
+        """Return all active zones as PublicZoneState."""
         zones = self._repo.list_active()
-        return [serialize_public_zone(z, LIVE_STATE_PLACEHOLDER) for z in zones]
+        return [serialize_public_zone(z, self._live_state_for(z.id)) for z in zones]
 
     def get_public(
         self,
@@ -107,7 +132,11 @@ class ZoneService:
         zone = self._get_or_404(zone_id)
         if not zone.is_active:
             raise NotFound(f"Zone {zone_id} not found.")
-        state_map = live_states or {}
+        state_map = (
+            live_states
+            if live_states is not None
+            else (self._engine.get_all_zone_live_states() if self._engine is not None else {})
+        )
         own_state = state_map.get(zone.id, LIVE_STATE_PLACEHOLDER)
         alternatives = self._find_alternatives(zone, state_map)
         return {
@@ -141,13 +170,22 @@ class ZoneService:
         zones = self._repo.list_all(include_inactive=include_inactive)
         open_alerts = self._repo.get_open_alert_ids_map()
         all_sources = self._source_repo.list_all(include_inactive=False)
+        now = utcnow()
+        stale_after_s = float(self._settings.get_settings().get("stale_after_s", 10.0))
         sources_by_zone: dict[int, list[dict[str, Any]]] = {}
         for src in all_sources:
-            sources_by_zone.setdefault(src.zone_id, []).append(serialize_source(src))
+            if self._engine is not None:
+                st, last_at = self._engine.get_source_status(
+                    src.id, now, stale_after_s=stale_after_s
+                )
+                ser = serialize_source(src, status=st, last_frame_at=last_at)
+            else:
+                ser = serialize_source(src)
+            sources_by_zone.setdefault(src.zone_id, []).append(ser)
         return [
             serialize_zone(
                 z,
-                LIVE_STATE_PLACEHOLDER,
+                self._live_state_for(z.id),
                 sources=sources_by_zone.get(z.id, []),
                 open_alert_id=open_alerts.get(z.id),
             )

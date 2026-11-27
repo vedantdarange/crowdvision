@@ -68,15 +68,25 @@ def app_ctx(app):
 
 @pytest.fixture()
 def clean_db(app):
-    """Reset all DB tables before and after a test."""
+    """Reset all DB tables and in-memory engine/emitter state before and after a test."""
     from app.extensions import db
 
+    def _reset_mem() -> None:
+        c = app.extensions.get("container")
+        if c is not None:
+            if hasattr(c, "engine"):
+                c.engine.reset()
+            if hasattr(c, "emitter"):
+                c.emitter.reset()
+
     with app.app_context():
+        _reset_mem()
         db.session.remove()
         db.drop_all()
         db.create_all()
     yield db
     with app.app_context():
+        _reset_mem()
         db.session.remove()
         db.drop_all()
         db.create_all()
