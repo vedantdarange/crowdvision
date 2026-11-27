@@ -123,8 +123,10 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
         resources={r"/api/*": {"origins": current_settings.cors_origins}},
     )
     from app.realtime.connect import register_socketio_handlers
+    from app.realtime.events import register_frame_handlers
 
     register_socketio_handlers()
+    register_frame_handlers()
     socketio.init_app(
         flask_app,
         async_mode="threading",
@@ -167,7 +169,7 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     # -----------------------------------------------------------------------
     # Dependency injection wiring & engine boot
     # -----------------------------------------------------------------------
-    container = wire(flask_app)
+    container = wire(flask_app, app_settings=current_settings)
 
     with flask_app.app_context():
         from sqlalchemy import inspect as sa_inspect
@@ -185,6 +187,7 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
                 settings_service=container.settings_service,
             )
 
+    import atexit
     import sys
 
     _one_shot_cli = len(sys.argv) >= 2 and sys.argv[1] in (
@@ -207,6 +210,8 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
         from app.realtime.tasks import start_background_loop
 
         start_background_loop(flask_app)
+        container.detection_manager.start(flask_app)
+        atexit.register(container.detection_manager.stop)
 
     # -----------------------------------------------------------------------
     # Global error handlers

@@ -11,8 +11,8 @@ from dataclasses import dataclass
 
 from flask import Flask, current_app
 
+from app.config import Settings, settings as default_settings
 from app.core.clock import Clock, SystemClock
-from app.detection.detector import FakeDetector
 from app.detection.manager import DetectionManager
 from app.engine.zone_engine import ZoneEngine
 from app.push.notifier import NoOpNotifier, Notifier
@@ -65,8 +65,9 @@ class Container:
     detection_manager: DetectionManager
 
 
-def wire(flask_app: Flask) -> Container:
+def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container:
     """Instantiate repositories, services, engine, and bind them to *flask_app*."""
+    cfg = app_settings or default_settings
     clock = SystemClock()
     engine_lock = threading.Lock()
 
@@ -142,7 +143,8 @@ def wire(flask_app: Flask) -> Container:
         clock=clock,
     )
     detection_manager = DetectionManager(
-        detector=FakeDetector(),
+        backend=cfg.detector_backend,
+        use_tracker=cfg.use_tracker,
         zone_engine=zone_engine,
         engine_lock=engine_lock,
         alert_service=alert_service,

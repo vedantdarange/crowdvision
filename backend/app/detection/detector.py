@@ -5,6 +5,7 @@ No torch / ultralytics imports in this phase; UltralyticsDetector is added in B5
 from __future__ import annotations
 
 import random
+import time
 from typing import Any, Protocol, runtime_checkable
 
 from app.detection.protocol import Box
@@ -34,10 +35,12 @@ class FakeDetector:
         seed: int = 42,
         default_count: int = 0,
         counts: dict[int, int] | None = None,
+        delay_ms: float = 0.0,
     ) -> None:
         self._seed = seed
         self._default_count = max(0, int(default_count))
         self._counts: dict[int, int] = dict(counts) if counts else {}
+        self._delay_ms = max(0.0, float(delay_ms))
         self._rng_by_source: dict[int, random.Random] = {}
 
     def set_count(self, source_id: int, count: int) -> None:
@@ -58,6 +61,8 @@ class FakeDetector:
         self, frame: Any, source_id: int, conf: float, imgsz: int
     ) -> list[Box]:
         """Return `count` deterministic normalised boxes for *source_id*."""
+        if self._delay_ms > 0:
+            time.sleep(self._delay_ms / 1000.0)
         target = self.get_count(source_id)
         rng = self._rng(source_id)
         min_conf = max(0.0, min(0.99, float(conf)))
@@ -73,3 +78,27 @@ class FakeDetector:
             box_conf = round(rng.uniform(min_conf, 0.99), 4)
             boxes.append((x1, y1, x2, y2, box_conf))
         return boxes
+
+
+def build_detector(
+    backend: str = "fake",
+    *,
+    seed: int = 42,
+    default_count: int = 0,
+    counts: dict[int, int] | None = None,
+    delay_ms: float = 0.0,
+) -> Detector:
+    """Instantiate the configured detector backend (`fake` or `ultralytics`)."""
+    norm = (backend or "fake").strip().lower()
+    if norm == "fake":
+        return FakeDetector(
+            seed=seed,
+            default_count=default_count,
+            counts=counts,
+            delay_ms=delay_ms,
+        )
+    if norm == "ultralytics":
+        raise RuntimeError(
+            "Ultralytics detector backend is not installed yet (implemented in B5b)."
+        )
+    raise ValueError(f"Unsupported DETECTOR_BACKEND: {backend!r}")

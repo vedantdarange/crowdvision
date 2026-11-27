@@ -6,15 +6,18 @@ import sys
 from unittest.mock import patch
 
 from app.core.clock import FakeClock
-from app.detection.detector import Detector, FakeDetector
+from app.detection.detector import Detector, FakeDetector, build_detector
+from app.detection.jpeg import MAX_FRAME_BYTES, validate_jpeg_frame
 from app.detection.protocol import (
     DetectRequest,
     DetectResult,
     Ping,
     Pong,
     ResetSource,
+    SetFakeCount,
     Shutdown,
 )
+from app.detection.tracker import PassThroughTracker, TrackerHook
 from app.realtime.emitter import RealtimeEmitter
 from scripts.fake_feed import (
     ProfileBounds,
@@ -67,16 +70,39 @@ class _DummySource:
 class TestProtocol:
     def test_dataclasses_pickle_roundtrip(self):
         msgs = [
-            DetectRequest(1, 1, b"\xff\xd8\xff", 640, 480, False, 0.35, 640, 123.4),
-            DetectResult(1, 1, True, None, [(0.1, 0.2, 0.3, 0.4, 0.9)], 1, 12.5),
+            DetectRequest(1, 1, b"\xff\xd8\xff", 640, 480, False, 0.35, 640, 123.4, request_id=7),
+            DetectResult(1, 1, True, None, [(0.1, 0.2, 0.3, 0.4, 0.9)], 1, 12.5, request_id=7),
             Shutdown(),
             ResetSource(1),
-            Ping(),
-            Pong(),
+            Ping(ping_id=42),
+            Pong(ping_id=42),
         ]
         for msg in msgs:
             restored = pickle.loads(pickle.dumps(msg))
             assert restored == msg
+
+    def test_ping_pong_default_zero(self):
+        """ping_id=0 is the initial readiness sentinel; callers always use >0."""
+        p0 = Ping()
+        p1 = Ping(ping_id=5)
+        assert p0.ping_id == 0
+        assert p1.ping_id == 5
+        assert Pong().ping_id == 0
+        assert Pong(ping_id=5).ping_id == 5
+
+    def test_request_id_is_required_with_no_default(self):
+        """request_id has no default so callers cannot construct un-correlated requests/results."""
+        import pytest
+
+        with pytest.raises(TypeError):
+            DetectRequest(1, 1, b"\xff\xd8\xff", 640, 480, False, 0.35, 640, 1.0)  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            DetectResult(1, 1, True, None, [], 0, 1.0)  # type: ignore[call-arg]
+
+        req_explicit = DetectRequest(1, 1, b"\xff\xd8\xff", 640, 480, False, 0.35, 640, 1.0, request_id=99)
+        assert req_explicit.request_id == 99
+        res = DetectResult(1, 1, True, None, [], 0, 1.0, request_id=99)
+        assert res.request_id == 99
 
     def test_no_torch_imported(self):
         assert "torch" not in sys.modules
@@ -172,3 +198,140 @@ class TestFakeFeedProfiles:
 
         offline = build_profile_counts("offline", bounds)
         assert offline == []
+
+
+class TestB5aComponents:
+    def test_set_fake_count_pickles_and_ultralytics_raises_not_installed(self):
+        import pytest
+
+        msg = SetFakeCount(1, 5)
+        assert pickle.loads(pickle.dumps(msg)) == msg
+        assert isinstance(build_detector("fake"), FakeDetector)
+
+        with pytest.raises(RuntimeError, match="not installed yet"):
+            build_detector("ultralytics")
+        with pytest.raises(ValueError):
+            build_detector("unknown-backend")
+
+    def test_tracker_hook_and_30s_inactivity_reset(self):
+        tracker = PassThroughTracker(inactivity_reset_s=30.0)
+        assert isinstance(tracker, TrackerHook)
+        boxes = [(0.1, 0.1, 0.2, 0.2, 0.9)]
+        assert tracker.update(1, boxes, now_s=100.0) == boxes
+        assert tracker.reset_count_by_source.get(1, 0) == 0
+
+        # Explicit reset triggers clear
+        tracker.update(1, boxes, now_s=105.0, reset=True)
+        assert tracker.reset_count_by_source[1] == 1
+
+        # Gap >= 30s triggers automatic clear
+        tracker.update(1, boxes, now_s=135.0)
+        assert tracker.reset_count_by_source[1] == 2
+
+        # Gap < 30s does not reset
+        tracker.update(1, boxes, now_s=140.0)
+        assert tracker.reset_count_by_source[1] == 2
+
+    def test_validate_jpeg_frame_rules(self):
+        import pytest
+        import struct
+
+        def _jpeg(w: int, h: int, pad: int = 0) -> bytes:
+            b = bytearray(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00")
+            while pad > 0:
+                c = min(pad, 60_000)
+                b += b"\xff\xfe" + struct.pack(">H", c + 2) + (b"\x00" * c)
+                pad -= c
+            b += b"\xff\xc0\x00\x0b\x08" + struct.pack(">HH", h, w) + b"\x01\x01\x11\x00\xff\xd9"
+            return bytes(b)
+
+        raw = _jpeg(640, 480)
+        parsed_bytes, w, h = validate_jpeg_frame(raw, declared_width=640, declared_height=480)
+        assert (w, h) == (640, 480) and parsed_bytes == raw
+
+        with pytest.raises(ValueError):
+            validate_jpeg_frame(b"\x89PNG\r\n\x1a\n")
+        with pytest.raises(ValueError):
+            validate_jpeg_frame(_jpeg(1281, 720), declared_width=1281, declared_height=720)
+        with pytest.raises(ValueError):
+            validate_jpeg_frame(_jpeg(640, 480), declared_width=320, declared_height=480)
+        with pytest.raises(ValueError):
+            validate_jpeg_frame(_jpeg(640, 480, pad=MAX_FRAME_BYTES))
+
+        # validate_jpeg_frame itself accepts None for declared_width/height (detect_once path).
+        # The events.py handler is responsible for rejecting missing/invalid dimensions.
+        parsed_bytes2, w2, h2 = validate_jpeg_frame(raw, declared_width=None, declared_height=None)
+        assert (w2, h2) == (640, 480)
+
+    def test_worker_loop_uses_raw_count_and_handles_ping_reset_and_once(self):
+        import queue
+        import threading
+        from app.detection.tracker import INACTIVITY_RESET_S
+        from app.detection.worker import run_worker
+
+        created_trackers: list[PassThroughTracker] = []
+
+        def _make_tracker() -> PassThroughTracker:
+            tr = PassThroughTracker()
+            created_trackers.append(tr)
+            return tr
+
+        req_q: queue.Queue = queue.Queue()
+        res_q: queue.Queue = queue.Queue()
+        with patch("app.detection.worker.PassThroughTracker", side_effect=_make_tracker):
+            t = threading.Thread(
+                target=run_worker,
+                kwargs={
+                    "request_queue": req_q,
+                    "result_queue": res_q,
+                    "backend": "fake",
+                    "seed": 99,
+                    "default_count": 3,
+                    "use_tracker": True,
+                },
+                daemon=True,
+            )
+            t.start()
+
+            # Initial Pong after warm-up carries ping_id=0 (readiness sentinel)
+            init_pong = res_q.get(timeout=2.0)
+            assert isinstance(init_pong, Pong)
+            assert init_pong.ping_id == 0
+            assert len(created_trackers) == 1
+            tracker = created_trackers[0]
+
+            # Explicit Ping -> Pong echoes the same ping_id
+            req_q.put(Ping(ping_id=7))
+            pong = res_q.get(timeout=2.0)
+            assert isinstance(pong, Pong)
+            assert pong.ping_id == 7
+
+            # Configure source 5 count=4; worker returns raw count=4
+            req_q.put(SetFakeCount(5, 4))
+            req_q.put(DetectRequest(5, 1, b"\xff\xd8\xff", 640, 480, False, 0.35, 640, 100.0, request_id=1))
+            r1 = res_q.get(timeout=2.0)
+            assert isinstance(r1, DetectResult) and r1.ok and r1.count == 4 and len(r1.boxes) == 4
+            assert r1.request_id == 1  # echoed from request
+            assert tracker.reset_count_by_source.get(5, 0) == 0
+
+            # After 30s inactivity gap, worker resets tracker for source 5 automatically
+            req_q.put(DetectRequest(5, 2, b"\xff\xd8\xff", 640, 480, False, 0.35, 640, 100.0 + INACTIVITY_RESET_S + 1.0, request_id=2))
+            r2 = res_q.get(timeout=2.0)
+            assert r2.ok and r2.count == 4
+            assert r2.request_id == 2
+            assert tracker.reset_count_by_source.get(5, 0) == 1
+
+            # Citizen detect_once uses source_id=-1 (bypasses tracker cleanly)
+            req_q.put(DetectRequest(-1, 1, b"\xff\xd8\xff", 0, 0, True, 0.35, 640, 132.0, request_id=3))
+            r_once = res_q.get(timeout=2.0)
+            assert r_once.source_id == -1 and r_once.ok and r_once.count == 3
+            assert r_once.request_id == 3
+            assert -1 not in tracker.reset_count_by_source
+
+            # Explicit ResetSource resets tracker again
+            req_q.put(ResetSource(5))
+            req_q.put(Shutdown())
+            t.join(timeout=2.0)
+            assert not t.is_alive()
+            assert tracker.reset_count_by_source.get(5, 0) == 2
+
