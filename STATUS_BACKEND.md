@@ -1,46 +1,47 @@
-# Backend status — updated 2026-11-27 14:08 IST
-## Phase: B4b (done)
+# Backend status — updated 2026-11-27 20:04 IST
+## Phase: B5a (done — audit fixes + stream-restart fix + /health contract alignment complete)
 ## Done since last update
-- Implemented Phase B4b (M3 part 2b — Wire ZoneEngine, Alerts API, Advisories, History & 1 Hz loop) on branch `be/b4b-wire-engine`:
-  - **Engine wiring & B3 stub removal**:
-    - Removed temporary `app/engine/_stub_b3.py` (`StubZoneEngine`).
-    - Replaced stub in `Container` and `DetectionManager.ingest_count` with `ZoneEngine(auto_commit_alerts=False)` guarded by a single `threading.Lock` (`engine_lock`).
-    - Added `app/services/engine_sync.py`: `boot_engine_from_db()` loads active zones, active sources, DB settings, open alerts (`AlertModel`), and pending `reraise_check_at` rows at `create_app()` startup; `reload_engine_from_db()` is hooked into `ZoneService`, `SourceService`, and `SettingsService` mutations while preserving smoothing buffers, levels, and pending timers.
-  - **Push Notifier interface & AlertService**:
-    - `app/push/notifier.py`: `Notifier` Protocol, `NoOpNotifier` (B6 replaces with WebPush), `FakeNotifier` (tests).
-    - `app/repositories/alert_repo.py` + `app/services/alert_service.py`: `persist_actions()` + `dispatch_side_effects()` (`apply()`): persists alert creation, reopens, escalations, peak updates, `FEED_LOST`/`FEED_RESTORED`, reminders, condition clear, auto-clear, `last_push_at`, and re-raise check clearing in ONE DB transaction; syncs snapshots and dispatches Socket.IO events (`alert:new`, `alert:updated`, `alert:escalated`, `zone:update`, `zone:detail`) + `Notifier` calls ONLY after commit (zero emits on rollback).
-    - `app/api/v1/alerts.py`: `GET /alerts` (comma `status`, `level`, `zone_id`, `from`, `to`, `active`, pagination, `sort`), `GET /alerts/{id}` (with timeline `events`), `POST /alerts/{id}/acknowledge|respond|resolve` (`409 INVALID_TRANSITION` on illegal transitions, `200` idempotent repeat, `reraise_check_at` set on resolve while `condition_active=True`, audit logs `ALERT_ACKNOWLEDGED`/`RESPONDING`/`RESOLVED`).
-  - **Advisories REST & Realtime**:
-    - `app/repositories/advisory_repo.py`, `app/schemas/advisories.py`, `app/services/advisory_service.py`, `app/api/v1/advisories.py`: `GET /advisories` (public, active & non-expired, global + `?zone_id=`), `POST /advisories`, `DELETE /advisories/{id}`, realtime `advisory:new` and `advisory:retracted` on `public`, audit `ADVISORY_CREATED`/`RETRACTED`.
-  - **Zone History, Live Map State & SAFE Alternatives**:
-    - `app/repositories/zone_sample_repo.py` + `GET /api/v1/zones/{id}/history` (`police+`, `bucket_s` in `10|60|300`, default last 30 min, max 5000 points).
-    - `GET /zones/live` and `GET /zones/{id}/public` now read live `ZoneEngine` state and compute `alternatives` = up to 3 nearest active `SAFE` zones by centroid distance.
-  - **1 Hz Background Loop (`app/realtime/tasks.py`)**:
-    - `socketio.start_background_task` loop running inside `app.app_context()` with exception logging + rollback resilience: `enforce_session_freshness`, `engine.tick` + `alert_service.persist_actions`, `source:status` change emission (`ONLINE`/`OFFLINE`), `zone_samples` persistence (`<= 1 per 2 s` per zone with data), advisory expiry (`advisory:retracted {id}`), and hourly retention delete (`zone_samples > 7 days`).
-  - **Tests & Smoke Check**:
-    - Added `tests/integration/test_alerts_lifecycle.py`, `tests/integration/test_advisories_history.py`, extended `tests/integration/test_role_matrix.py` (all 32 routes).
-    - Full suite (`python -m pytest tests/ -v --tb=short`): **`200 passed, 1 skipped in 18.19s`**.
-    - Smoke test (`flask db upgrade`, `flask seed-demo`, `run_fake_feed(..., profile='ramp')`, `GET /api/v1/alerts`, police `SocketIOTestClient`): alert created + escalated (`peak_level='CRITICAL'`, `GET /alerts` status `200`), Socket.IO police client received `['alert:new', 'alert:escalated']`.
+- Implemented Phase B5a (M4 part 1 — Spawned detection worker & `frame:submit` pipeline with `FakeDetector`) on branch `be/b5a-detection-worker` and fixed all confirmed audit findings, the same-socket stream restart bug, and the `/api/v1/health` contract shape mismatch:
+  - **Protocol, Detector Factory, Tracker Hook & In-Memory JPEG Validator**:
+    - `app/detection/protocol.py`: added `SetFakeCount` control message alongside `DetectRequest`, `DetectResult`, `Ping`, `Pong`, `ResetSource`, `Shutdown`. Added required `request_id: int` (no default) to `DetectRequest` and `DetectResult`, and `ping_id: int = 0` to `Ping` and `Pong` (`0` reserved for initial readiness `Pong`).
+    - `app/detection/detector.py`: added `build_detector(backend)` for `DETECTOR_BACKEND=fake|ultralytics` (`fake` -> `FakeDetector` with optional `delay_ms` for flood testing; `ultralytics` raises `"Ultralytics detector backend is not installed yet (implemented in B5b)."`). No `torch` / `ultralytics` / `cv2` imports in B5a.
+    - `app/detection/tracker.py`: added `TrackerHook` Protocol and `PassThroughTracker` stub (`USE_TRACKER=false` default) enforcing explicit `reset=True` and 30 s inactivity reset per source without ever changing occupancy counts.
+    - `app/detection/jpeg.py`: pure-Python in-RAM JPEG header & bounds validator (`<= 300 KB`, `width <= 1280`, SOF dimension validation) — zero temp files and zero vision dependencies.
+  - **Spawned Worker Process & DetectionManager**:
+    - `app/detection/worker.py`: Windows `spawn`-safe top-level `run_worker()` loop handling `DetectRequest`, `Ping`->`Pong` (echoing `ping_id` and emitting initial `Pong(ping_id=0)`), `ResetSource`, `SetFakeCount`, `Shutdown`; echoes `request_id` in `DetectResult`; maintains per-source state (`last_seen`, optional tracker); sets occupancy `count = len(boxes)`. Never logs or writes JPEG bytes.
+    - `app/detection/manager.py`: spawns worker with `multiprocessing.get_context("spawn")`, bounded `request_queue(maxsize=16)`, `result_queue`, `socketio.start_background_task` pump & supervisor threads running inside `app.app_context()`.
+    - Per-source leases (`SOURCE_IN_USE`, released on disconnect or after `stale_after_s`), non-blocking `put_nowait` (`DETECTOR_BUSY`), monotonic `_next_request_id >= 1` (never reset) keying `_inflight[request_id]` and `_once_waiters[request_id]` with 60 s TTL cleanup, synchronized lease/inflight validation in `_handle_worker_item` (discarding expired/disconnected/superseded/consumed results before emit or `ingest_count()`), automatic superseding/purging of prior `_inflight` entries for `source_id` on `effective_reset` in `submit_frame()` and in `reset_source()`, per-probe `_ping_waiters[ping_id]` for `check_health()`, `reset=True` and 30 s inactivity buffer clearing, `detect_once(jpeg, timeout=5)` synchronous helper (`source_id=-1`, no tracker, serialized settings reads), and supervisor auto-restart (up to 3 times with backoff `(0.1, 0.2, 0.4)`, then `"unavailable"`).
+    - Guarded startup in `app/__init__.py` (`not TESTING`, reloader `WERKZEUG_RUN_MAIN == "true"` or non-debug) + `atexit` clean shutdown.
+  - **Realtime Handler, Connect Lease Release & Live `/health`**:
+    - `app/realtime/events.py`: `@socketio.on("frame:submit")` checks `check_session_freshness` first (`auth:expired` + disconnect if expired/disabled/demoted), enforces `police`/`admin` role (`FORBIDDEN`), active source/zone (`UNKNOWN_SOURCE`), mandatory positive-int `width` & `height` (`BAD_IMAGE`, rejecting missing/bool/non-positive values), JPEG size/width/dimension consistency (`BAD_IMAGE`), and delegates to `DetectionManager.submit_frame`.
+    - `app/realtime/connect.py`: shared `_is_sid_stale` / `_expire_sid` helpers used by both 1 Hz tick and `frame:submit`; releases source leases on socket disconnect or expiry.
+    - `app/realtime/emitter.py`: added `emit_frame_result(sid, payload)` delivering `frame:result` strictly to the sender `sid`, carrying source `count`/`boxes` and zone-level `smoothed_count`/`density`/`level`.
+    - `app/api/v1/health.py`: queries `DetectionManager.check_health()` using correlated `Ping`/`Pong` for `detector` (`loading`|`ready`|`unavailable`) and `worker_alive`, and returns the contract §6.2 / `contract/examples/health.json` top-level JSON `{status, db, detector, worker_alive, version}` (removed the incorrect `{"data": ...}` wrapper).
+  - **Tests**:
+    - Updated `tests/integration/test_health.py` and `tests/integration/test_detection_pipeline.py` to expect the top-level `/api/v1/health` JSON shape per contract §6.2 & `contract/examples/health.json`.
+    - Extended `tests/unit/test_detection.py` and `tests/integration/test_detection_pipeline.py` with regressions for delayed-result routing after disconnect, same-socket stream restart (`reset=True, seq=1` superseding pending pre-restart frames without smoother contamination or alerts), concurrent health probe `Pong` isolation, mandatory `width`/`height` validation, overlapping `detect_once` (with and without timeout), worker kill with pending requests + `/health` recovery, 30 s inactivity reset in both worker tracker and manager smoother, and `TESTING=False` startup/clean shutdown.
+    - Focused B5a + Health suite (`python -m pytest tests/unit/test_detection.py tests/integration/test_detection_pipeline.py tests/integration/test_health.py -v --tb=short`): **`43 passed in 65.81s`**.
+    - Full backend suite (`python -m pytest tests/ -v --tb=short`): **`228 passed, 1 skipped in 83.05s`** (skipped test is `test_journal_mode_wal` on `:memory:` SQLite, covered by `test_journal_mode_wal_on_file_db`).
 
 ## In progress
-- None (Phase B4b complete on `be/b4b-wire-engine`; ready for review/commit. Phase B5 not started).
+- None (Phase B5a complete and verified on `be/b5a-detection-worker`; ready to commit and begin B5b. Changes left uncommitted).
 
 ## Blocked / questions for Person A
 - None.
 
 ## Requests for AI-B (frontend)
-- M3 backend is live on `be/b4b-wire-engine`: alerts (`/alerts*`), advisories (`/advisories*`), zone history (`/zones/{id}/history`), nearest-SAFE `alternatives` on `/zones/{id}/public`, and realtime events (`zone:update`, `zone:detail`, `alert:new`, `alert:updated`, `alert:escalated`, `source:status`, `advisory:new`, `advisory:retracted`).
-- Run `flask fake-feed --zone 1 --profile ramp --serve` from `backend/` to drive a live demo server on `:5000`.
+- `frame:submit` -> `frame:result` pipeline is wired end-to-end on `be/b5a-detection-worker` with `FakeDetector` (leases, `SOURCE_IN_USE`, `DETECTOR_BUSY`, `BAD_IMAGE` including mandatory positive-int `width`/`height`, `UNKNOWN_SOURCE`, `FORBIDDEN`, `/health` correlated `Ping`/`Pong`, top-level `/api/v1/health` JSON matching `contract/examples/health.json`). Real YOLOv8n (`UltralyticsDetector`) arrives in B5b.
 
 ## Untested / known issues
-- Live external browser WebSocket + `--serve` subprocess test (in-process `SocketIOTestClient` and background loop thread with `app_context` were verified).
-- Retention deletion of citizen `reports > REPORT_RETENTION_DAYS` will hook into the hourly retention step once `ReportService` / B7 lands (B4b prunes `zone_samples > 7 days`).
-- Carried over from B0: `flask set-password` failure paths, `413 PAYLOAD_TOO_LARGE`, and `test_journal_mode_wal` on `:memory:` SQLite (covered by `test_journal_mode_wal_on_file_db`).
+- Child-process zero disk writes/JPEG logging: runtime `open`/`tempfile` monkeypatches verify the main Flask process only; child-process `worker.py` / `detector.py` zero-disk-write behavior is verified by code inspection.
+- External Socket.IO WebSocket browser test across Werkzeug debug reloader (`WERKZEUG_RUN_MAIN` dual-process guard) and live webcam / `UltralyticsDetector` (real YOLO model) — deferred to B5b (`DETECTOR_BACKEND=ultralytics` currently raises `"not installed yet"`).
+- Real DB-failure `/api/v1/health` degraded path (`db="error"`, `status="degraded"`) is verified by inspection only in B5a; tests cover `db="ok"` + live worker transitions (`ready` / `unavailable` / `loading`).
+- Carried over: retention cleanup of citizen reports (`B7`), `flask set-password` failure paths, `413 PAYLOAD_TOO_LARGE`, and `test_journal_mode_wal` on `:memory:` SQLite (covered by `test_journal_mode_wal_on_file_db`).
 
 ## Next 3 steps
-1. Review and commit `be/b4b-wire-engine`, merge into `main`.
-2. Begin Phase B5 (M4): separate-process YOLOv8n worker, `frame:submit` / `frame:result`, per-source leases (`SOURCE_IN_USE`), queue-full `DETECTOR_BUSY`.
+1. Review and commit `be/b5a-detection-worker`.
+2. Begin Phase B5b (M4 part 2): `UltralyticsDetector` (`yolov8n.pt` / `best.pt`), OpenCV decode, warm-up, optional `ByteTrackTracker`, `eval/eval_latency.py`, and real webcam test.
 3. Begin Phase B6 (M5): `WebPushNotifier` (`pywebpush` + `py-vapid`) and `/push/*` endpoints.
 
 ## Numbers (latency, MAE, coverage) once available
-- Pure `app/engine/` unit coverage: **97%** (measured in B4a). Latency/MAE pending B5/B9.
+- Pure `app/engine/` unit coverage: **97%** (measured in B4a). Real YOLO latency/MAE pending B5b/B9.

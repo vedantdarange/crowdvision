@@ -123,6 +123,10 @@ class RealtimeEmitter:
             namespace="/",
         )
 
+    def emit_frame_result(self, sid: str, payload: dict[str, Any]) -> None:
+        """Emit frame:result strictly to the submitting socket sid (contract §8)."""
+        socketio.emit("frame:result", payload, to=sid, namespace="/")
+
     def reset(self) -> None:
         with self._lock:
             self._last_sent.clear()

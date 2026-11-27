@@ -22,6 +22,7 @@ class DetectRequest:
     conf: float
     imgsz: int
     received_at: float
+    request_id: int  # Required unique monotonic ID assigned by DetectionManager; no default
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class DetectResult:
     boxes: list[Box]
     count: int
     infer_ms: float
+    request_id: int  # Required ID echoed from DetectRequest; no default
 
 
 # ---------------------------------------------------------------------------
@@ -50,9 +52,16 @@ class ResetSource:
 
 @dataclass(frozen=True)
 class Ping:
-    pass
+    ping_id: int = 0  # 0 = reserved for initial readiness Pong; callers use >0
 
 
 @dataclass(frozen=True)
 class Pong:
-    pass
+    ping_id: int = 0  # Echoed from Ping; 0 means worker warm-up complete (no caller waiter)
+
+
+@dataclass(frozen=True)
+class SetFakeCount:
+    source_id: int
+    count: int
+

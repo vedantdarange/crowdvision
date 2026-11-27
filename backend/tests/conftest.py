@@ -82,6 +82,8 @@ def clean_db(app):
                 c.source_status_tracker.reset()
             if hasattr(c, "task_state"):
                 c.task_state.reset()
+            if hasattr(c, "detection_manager"):
+                c.detection_manager.reset_runtime_state()
 
     with app.app_context():
         _reset_mem()

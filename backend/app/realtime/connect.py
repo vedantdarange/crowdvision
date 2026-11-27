@@ -25,7 +25,7 @@ import threading
 from datetime import datetime
 from typing import Any
 
-from flask import request
+from flask import current_app, has_app_context, request
 from flask_jwt_extended import decode_token
 from flask_socketio import join_room
 
@@ -119,6 +119,9 @@ def on_disconnect() -> None:
     sid: str = request.sid  # type: ignore[attr-defined]
     with _lock:
         sessions.pop(sid, None)
+    container = current_app.extensions.get("container") if has_app_context() else None
+    if container is not None and hasattr(container, "detection_manager"):
+        container.detection_manager.release_leases_for_sid(sid)
     logger.debug("Socket.IO disconnect: sid=%s", sid)
 
 
@@ -132,6 +135,84 @@ def register_socketio_handlers() -> None:
 # ---------------------------------------------------------------------------
 # Session freshness enforcement
 # ---------------------------------------------------------------------------
+
+def _is_sid_stale(sid: str, info: dict[str, Any], now_ts: float) -> bool:
+    """Return True if *info* for *sid* is expired, disabled, or role-changed."""
+    user_id = info.get("user_id")
+    token_exp = info.get("token_exp")
+    registered_role = info.get("role")
+
+    if user_id is None:
+        return False
+
+    if token_exp is not None and now_ts >= token_exp:
+        return True
+
+    try:
+        user: User | None = db.session.get(User, user_id)
+        if user is None or not user.is_active:
+            return True
+        if registered_role != user.role:
+            return True
+    except Exception:
+        logger.exception(
+            "session freshness check: DB error for user_id=%s", user_id
+        )
+        return False
+    return False
+
+
+def _expire_sid(sid: str, user_id: int | None) -> None:
+    """Expel an expired/disabled/demoted socket from privileged rooms and release leases."""
+    logger.info("Expiring stale session sid=%s user_id=%s", sid, user_id)
+    try:
+        _leave_room_safe(sid, "role:police")
+        _leave_room_safe(sid, "role:admin")
+        if user_id is not None:
+            _leave_room_safe(sid, f"user:{user_id}")
+        socketio.emit("auth:expired", {}, to=sid, namespace="/")
+        _disconnect_safe(sid)
+    except Exception:
+        logger.exception("Error disconnecting expired sid=%s", sid)
+    with _lock:
+        sessions.pop(sid, None)
+    container = current_app.extensions.get("container") if has_app_context() else None
+    if container is not None and hasattr(container, "detection_manager"):
+        container.detection_manager.release_leases_for_sid(sid)
+
+
+def check_session_freshness(
+    sid: str,
+    now: datetime,
+    *,
+    emit_forbidden_error: Any = None,
+) -> tuple[bool, dict[str, Any] | None]:
+    """Validate freshness of a single *sid* (called on `frame:submit`).
+
+    Returns `(True, info_copy)` if valid, or `(False, None)` after expiring &
+    disconnecting the socket if expired/disabled/demoted.
+    """
+    with _lock:
+        raw_info = sessions.get(sid)
+        info = dict(raw_info) if raw_info is not None else None
+
+    if info is None:
+        return False, None
+
+    if info.get("user_id") is not None:
+        db.session.expire_all()
+
+    if _is_sid_stale(sid, info, now.timestamp()):
+        if emit_forbidden_error is not None:
+            try:
+                emit_forbidden_error()
+            except Exception:
+                pass
+        _expire_sid(sid, info.get("user_id"))
+        return False, None
+
+    return True, info
+
 
 def enforce_session_freshness(now: datetime) -> None:
     """Remove expired/disabled/demoted sockets from privileged rooms.
@@ -152,47 +233,5 @@ def enforce_session_freshness(now: datetime) -> None:
         db.session.expire_all()
 
     for sid, info in snapshot.items():
-        user_id = info.get("user_id")
-        token_exp = info.get("token_exp")
-        registered_role = info.get("role")
-
-        if user_id is None:
-            continue
-
-        should_expire = False
-
-        # 1. Token expired
-        if token_exp is not None and now_ts >= token_exp:
-            should_expire = True
-
-        # 2. User disabled or demoted (re-read DB)
-        if not should_expire:
-            try:
-                user: User | None = db.session.get(User, user_id)
-                if user is None or not user.is_active:
-                    should_expire = True
-                elif registered_role != user.role:
-                    # Any role change (e.g. police -> citizen, admin -> police)
-                    should_expire = True
-            except Exception:
-                logger.exception(
-                    "enforce_session_freshness: DB error for user_id=%s", user_id
-                )
-                continue
-
-        if should_expire:
-            logger.info(
-                "enforce_session_freshness: expiring sid=%s user_id=%s", sid, user_id
-            )
-            try:
-                _leave_room_safe(sid, "role:police")
-                _leave_room_safe(sid, "role:admin")
-                _leave_room_safe(sid, f"user:{user_id}")
-                socketio.emit("auth:expired", {}, to=sid, namespace="/")
-                _disconnect_safe(sid)
-            except Exception:
-                logger.exception(
-                    "enforce_session_freshness: error disconnecting sid=%s", sid
-                )
-            with _lock:
-                sessions.pop(sid, None)
+        if _is_sid_stale(sid, info, now_ts):
+            _expire_sid(sid, info.get("user_id"))
