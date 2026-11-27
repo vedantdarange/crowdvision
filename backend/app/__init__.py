@@ -139,6 +139,8 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     # -----------------------------------------------------------------------
     # Blueprints
     # -----------------------------------------------------------------------
+    from app.api.v1.advisories import advisories_bp
+    from app.api.v1.alerts import alerts_bp
     from app.api.v1.auth import auth_bp
     from app.api.v1.config import config_bp
     from app.api.v1.health import health_bp
@@ -152,6 +154,8 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     flask_app.register_blueprint(zones_bp, url_prefix="/api/v1")
     flask_app.register_blueprint(sources_bp, url_prefix="/api/v1")
     flask_app.register_blueprint(config_bp, url_prefix="/api/v1")
+    flask_app.register_blueprint(alerts_bp, url_prefix="/api/v1")
+    flask_app.register_blueprint(advisories_bp, url_prefix="/api/v1")
 
     # -----------------------------------------------------------------------
     # CLI commands
@@ -161,9 +165,48 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     register_commands(flask_app)
 
     # -----------------------------------------------------------------------
-    # Dependency injection wiring
+    # Dependency injection wiring & engine boot
     # -----------------------------------------------------------------------
-    wire(flask_app)
+    container = wire(flask_app)
+
+    with flask_app.app_context():
+        from sqlalchemy import inspect as sa_inspect
+
+        from app.services.engine_sync import boot_engine_from_db
+
+        inspector = sa_inspect(db.engine)
+        tables_ready = inspector.has_table("zones") and inspector.has_table("alerts")
+        if tables_ready:
+            boot_engine_from_db(
+                zone_engine=container.zone_engine,
+                zone_repo=container.zone_repo,
+                source_repo=container.source_repo,
+                alert_repo=container.alert_repo,
+                settings_service=container.settings_service,
+            )
+
+    import sys
+
+    _one_shot_cli = len(sys.argv) >= 2 and sys.argv[1] in (
+        "db",
+        "seed-demo",
+        "set-password",
+        "routes",
+        "shell",
+    )
+    _fake_feed_no_serve = (
+        len(sys.argv) >= 2 and sys.argv[1] == "fake-feed" and "--serve" not in sys.argv
+    )
+    if (
+        tables_ready
+        and not _one_shot_cli
+        and not _fake_feed_no_serve
+        and not flask_app.config.get("TESTING")
+        and (not flask_app.debug or current_settings.werkzeug_run_main == "true")
+    ):
+        from app.realtime.tasks import start_background_loop
+
+        start_background_loop(flask_app)
 
     # -----------------------------------------------------------------------
     # Global error handlers

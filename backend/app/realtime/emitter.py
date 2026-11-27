@@ -1,10 +1,15 @@
-"""app/realtime/emitter.py — Throttled Socket.IO zone event emitter (contract §7.2).
+"""app/realtime/emitter.py — Socket.IO event emitter with zone throttling (contract §7.2).
 
 Rules (plan §8.3 / contract §7.2):
-  - `emit_zone_update` -> room `public`, payload = `PublicZoneState`
-  - `emit_zone_detail` -> room `role:police`, payload = `ZoneState`
-  - Throttled per zone to <= 1 emit/second UNLESS `level` or `trend` changed.
-  - Payloads are ALWAYS built via B2's `app.schemas.serializers` functions.
+  - `zone:update`       -> room `public` (`PublicZoneState`)
+  - `zone:detail`       -> room `role:police` (`ZoneState`)
+  - `alert:new`         -> room `role:police` (`Alert`)
+  - `alert:updated`     -> room `role:police` (`Alert`)
+  - `alert:escalated`   -> room `role:police` (`{alert: Alert, reason}`)
+  - `source:status`     -> room `role:police` (`{source_id, zone_id, status, last_frame_at}`)
+  - `advisory:new`      -> room `public` (`Advisory`)
+  - `advisory:retracted`-> room `public` (`{id}`)
+  - Zone events throttled to <= 1 emit/s/zone unless `level` or `trend` changed.
 """
 from __future__ import annotations
 
@@ -28,7 +33,6 @@ class RealtimeEmitter:
         self._clock: Clock = clock or SystemClock()
         self._min_interval_s = float(min_interval_s)
         self._lock = threading.Lock()
-        # (event_name, zone_id) -> (last_emit_time_s, last_level, last_trend)
         self._last_sent: dict[tuple[str, int], tuple[float, str, str]] = {}
 
     def _should_emit(self, event_name: str, zone_id: int, level: str, trend: str) -> bool:
@@ -46,20 +50,11 @@ class RealtimeEmitter:
                 return True
             return False
 
-    def emit_zone_update(
-        self,
-        zone: "Zone",
-        live_state: dict[str, Any],
-    ) -> bool:
-        """Emit `zone:update` (PublicZoneState) to room `public` if unthrottled.
-
-        Returns True if emitted, False if suppressed by throttle.
-        """
+    def emit_zone_update(self, zone: "Zone", live_state: dict[str, Any]) -> bool:
         level = str(live_state.get("level", "NO_DATA"))
         trend = str(live_state.get("trend", "STEADY"))
         if not self._should_emit("zone:update", zone.id, level, trend):
             return False
-
         payload = serialize_public_zone(zone, live_state)
         socketio.emit("zone:update", payload, to="public", namespace="/")
         return True
@@ -71,15 +66,10 @@ class RealtimeEmitter:
         sources: list[dict[str, Any]],
         open_alert_id: int | None = None,
     ) -> bool:
-        """Emit `zone:detail` (ZoneState) to room `role:police` if unthrottled.
-
-        Returns True if emitted, False if suppressed by throttle.
-        """
         level = str(live_state.get("level", "NO_DATA"))
         trend = str(live_state.get("trend", "STEADY"))
         if not self._should_emit("zone:detail", zone.id, level, trend):
             return False
-
         payload = serialize_zone(
             zone,
             live_state,
@@ -89,8 +79,51 @@ class RealtimeEmitter:
         socketio.emit("zone:detail", payload, to="role:police", namespace="/")
         return True
 
+    def emit_alert_new(self, alert_payload: dict[str, Any]) -> None:
+        socketio.emit("alert:new", alert_payload, to="role:police", namespace="/")
+
+    def emit_alert_updated(self, alert_payload: dict[str, Any]) -> None:
+        socketio.emit("alert:updated", alert_payload, to="role:police", namespace="/")
+
+    def emit_alert_escalated(self, alert_payload: dict[str, Any], reason: str) -> None:
+        socketio.emit(
+            "alert:escalated",
+            {"alert": alert_payload, "reason": reason},
+            to="role:police",
+            namespace="/",
+        )
+
+    def emit_source_status(
+        self,
+        source_id: int,
+        zone_id: int,
+        status: str,
+        last_frame_at: str | None,
+    ) -> None:
+        socketio.emit(
+            "source:status",
+            {
+                "source_id": source_id,
+                "zone_id": zone_id,
+                "status": status,
+                "last_frame_at": last_frame_at,
+            },
+            to="role:police",
+            namespace="/",
+        )
+
+    def emit_advisory_new(self, advisory_payload: dict[str, Any]) -> None:
+        socketio.emit("advisory:new", advisory_payload, to="public", namespace="/")
+
+    def emit_advisory_retracted(self, advisory_id: int) -> None:
+        socketio.emit(
+            "advisory:retracted",
+            {"id": advisory_id},
+            to="public",
+            namespace="/",
+        )
+
     def reset(self) -> None:
-        """Clear throttle state (useful in tests)."""
         with self._lock:
             self._last_sent.clear()
 
@@ -107,7 +140,6 @@ def _active_emitter() -> RealtimeEmitter:
 
 
 def emit_zone_update(zone: "Zone", live_state: dict[str, Any]) -> bool:
-    """Convenience wrapper delegating to the active app container's emitter."""
     return _active_emitter().emit_zone_update(zone, live_state)
 
 
@@ -117,7 +149,6 @@ def emit_zone_detail(
     sources: list[dict[str, Any]],
     open_alert_id: int | None = None,
 ) -> bool:
-    """Convenience wrapper delegating to the active app container's emitter."""
     return _active_emitter().emit_zone_detail(
         zone, live_state, sources=sources, open_alert_id=open_alert_id
     )

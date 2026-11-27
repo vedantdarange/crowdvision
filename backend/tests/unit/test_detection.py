@@ -15,7 +15,6 @@ from app.detection.protocol import (
     ResetSource,
     Shutdown,
 )
-from app.engine.zone_engine import StubZoneEngine
 from app.realtime.emitter import RealtimeEmitter
 from scripts.fake_feed import (
     ProfileBounds,
@@ -104,54 +103,6 @@ class TestFakeDetector:
         det.set_count(source_id=2, count=4)
         assert len(det.detect(None, source_id=1, conf=0.3, imgsz=640)) == 1
         assert len(det.detect(None, source_id=2, conf=0.3, imgsz=640)) == 4
-
-
-class TestStubZoneEngine:
-    def test_density_and_count_modes(self):
-        clock = FakeClock(start=1000.0)
-        engine = StubZoneEngine()
-
-        # DENSITY mode: coverage 6.0 -> 18 = 3.0 (WARNING), 24 = 4.0 (CRITICAL)
-        z_density = {
-            "id": 1,
-            "mode": "DENSITY",
-            "warning_density": 3.0,
-            "critical_density": 4.0,
-            "warning_count": None,
-            "critical_count": None,
-        }
-        src = {"id": 1, "zone_id": 1, "coverage_area_m2": 6.0}
-
-        st1 = engine.ingest(1, 6, clock.utcnow(), zone_cfg=z_density, source_cfg=src)
-        assert st1["level"] == "SAFE"
-        assert st1["density"] == 1.0
-
-        clock.advance(1.0)
-        st2 = engine.ingest(1, 18, clock.utcnow(), zone_cfg=z_density, source_cfg=src)
-        assert st2["level"] == "WARNING"
-        assert st2["trend"] == "RISING"
-
-        clock.advance(1.0)
-        st3 = engine.ingest(1, 24, clock.utcnow(), zone_cfg=z_density, source_cfg=src)
-        assert st3["level"] == "CRITICAL"
-
-        status, last_at = engine.get_source_status(1, clock.utcnow(), stale_after_s=10.0)
-        assert status == "ONLINE"
-        assert last_at is not None
-
-        # COUNT mode: W=3, C=5
-        z_count = {
-            "id": 2,
-            "mode": "COUNT",
-            "warning_density": 3.0,
-            "critical_density": 4.0,
-            "warning_count": 3,
-            "critical_count": 5,
-        }
-        src2 = {"id": 2, "zone_id": 2, "coverage_area_m2": 25.0}
-        assert engine.ingest(2, 2, clock.utcnow(), zone_cfg=z_count, source_cfg=src2)["level"] == "SAFE"
-        assert engine.ingest(2, 3, clock.utcnow(), zone_cfg=z_count, source_cfg=src2)["level"] == "WARNING"
-        assert engine.ingest(2, 5, clock.utcnow(), zone_cfg=z_count, source_cfg=src2)["level"] == "CRITICAL"
 
 
 class TestRealtimeEmitterThrottle:

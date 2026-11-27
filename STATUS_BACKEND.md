@@ -1,33 +1,46 @@
-# Backend status — updated 2026-11-27 13:41 IST
-## Phase: B4a (done)
+# Backend status — updated 2026-11-27 14:08 IST
+## Phase: B4b (done)
 ## Done since last update
-- Implemented Phase B4a (M3 part 2a — pure Python zone/alert engine) on branch `be/b4a-zone-engine` with zero Flask, SQLAlchemy, Socket.IO, or `threading` imports inside the engine logic (did not modify DB, endpoints, or realtime):
-  - `app/engine/smoothing.py`: `RollingMedian` (per-source rolling median over last N raw counts, `resize()` preserving recent samples on reload, `clear()` on reset).
-  - `app/engine/zone_machine.py`: `ZoneMachine` & `LevelTransition` (hysteresis factor `h`, `debounce_s` upgrade hold, `clear_s` downgrade hold, pending-timer reset when candidate target changes, immediate `NO_DATA` on stale outage & immediate recovery, 60 s sliding-window trend with `+/-0.3` density or `+/-2` count thresholds).
-  - `app/engine/alert_rules.py`: pure functions `evaluate_alert_transition` and `evaluate_tick_alerts`, caller-supplied snapshots `OpenAlertSnapshot` & `ResolvedReraiseSnapshot` (plus dict coercion helpers), and immutable action dataclasses (`CreateAlert`, `ReopenAlert`, `EscalateAlert`, `UpdatePeak`, `ClearCondition`, `AutoClearAlert`, `RecordFeedEvent`, `Remind`, `MarkReraiseChecked`, `EmitZoneUpdate`, `SendPush`).
-  - `app/engine/zone_engine.py`: `ZoneEngine` orchestrating sources -> max fresh-source metric -> `ZoneMachine` -> `alert_rules`, with `boot()` (loads open alerts and pending reraises), `reload()` (preserves smoothing buffers, levels, and pending timers), `ingest()`, `tick()`, and alert sync helpers (`acknowledge_alert`, `respond_alert`, `resolve_alert`, `set_open_alert`).
-  - Temporarily isolated B3's `StubZoneEngine` in `app/engine/_stub_b3.py` (re-exported by `zone_engine.py`) so B3 callers remain untouched until B4b.
-- **Tests & Coverage**:
-  - Added `tests/unit/test_engine.py` covering all 15 required table-driven and property-style scenarios with `FakeClock` (3600 s invariant check, hysteresis boundaries, `COUNT` vs `DENSITY`, multi-source max/stale, `FEED_LOST`/`FEED_RESTORED`, boot restore, `CRITICAL` non-auto-clear, re-raise after resolve, `reload()` preservation, cooldown suppression, reminder timing).
-  - `python -m pytest tests/unit -v --cov=app/engine --cov-report=term-missing` -> **54 passed in 4.19s**, **97% total coverage** on `app/engine/` (`alert_rules.py` 100%, `smoothing.py` 100%, `zone_machine.py` 99%, `zone_engine.py` 98%, `_stub_b3.py` 83%).
+- Implemented Phase B4b (M3 part 2b — Wire ZoneEngine, Alerts API, Advisories, History & 1 Hz loop) on branch `be/b4b-wire-engine`:
+  - **Engine wiring & B3 stub removal**:
+    - Removed temporary `app/engine/_stub_b3.py` (`StubZoneEngine`).
+    - Replaced stub in `Container` and `DetectionManager.ingest_count` with `ZoneEngine(auto_commit_alerts=False)` guarded by a single `threading.Lock` (`engine_lock`).
+    - Added `app/services/engine_sync.py`: `boot_engine_from_db()` loads active zones, active sources, DB settings, open alerts (`AlertModel`), and pending `reraise_check_at` rows at `create_app()` startup; `reload_engine_from_db()` is hooked into `ZoneService`, `SourceService`, and `SettingsService` mutations while preserving smoothing buffers, levels, and pending timers.
+  - **Push Notifier interface & AlertService**:
+    - `app/push/notifier.py`: `Notifier` Protocol, `NoOpNotifier` (B6 replaces with WebPush), `FakeNotifier` (tests).
+    - `app/repositories/alert_repo.py` + `app/services/alert_service.py`: `persist_actions()` + `dispatch_side_effects()` (`apply()`): persists alert creation, reopens, escalations, peak updates, `FEED_LOST`/`FEED_RESTORED`, reminders, condition clear, auto-clear, `last_push_at`, and re-raise check clearing in ONE DB transaction; syncs snapshots and dispatches Socket.IO events (`alert:new`, `alert:updated`, `alert:escalated`, `zone:update`, `zone:detail`) + `Notifier` calls ONLY after commit (zero emits on rollback).
+    - `app/api/v1/alerts.py`: `GET /alerts` (comma `status`, `level`, `zone_id`, `from`, `to`, `active`, pagination, `sort`), `GET /alerts/{id}` (with timeline `events`), `POST /alerts/{id}/acknowledge|respond|resolve` (`409 INVALID_TRANSITION` on illegal transitions, `200` idempotent repeat, `reraise_check_at` set on resolve while `condition_active=True`, audit logs `ALERT_ACKNOWLEDGED`/`RESPONDING`/`RESOLVED`).
+  - **Advisories REST & Realtime**:
+    - `app/repositories/advisory_repo.py`, `app/schemas/advisories.py`, `app/services/advisory_service.py`, `app/api/v1/advisories.py`: `GET /advisories` (public, active & non-expired, global + `?zone_id=`), `POST /advisories`, `DELETE /advisories/{id}`, realtime `advisory:new` and `advisory:retracted` on `public`, audit `ADVISORY_CREATED`/`RETRACTED`.
+  - **Zone History, Live Map State & SAFE Alternatives**:
+    - `app/repositories/zone_sample_repo.py` + `GET /api/v1/zones/{id}/history` (`police+`, `bucket_s` in `10|60|300`, default last 30 min, max 5000 points).
+    - `GET /zones/live` and `GET /zones/{id}/public` now read live `ZoneEngine` state and compute `alternatives` = up to 3 nearest active `SAFE` zones by centroid distance.
+  - **1 Hz Background Loop (`app/realtime/tasks.py`)**:
+    - `socketio.start_background_task` loop running inside `app.app_context()` with exception logging + rollback resilience: `enforce_session_freshness`, `engine.tick` + `alert_service.persist_actions`, `source:status` change emission (`ONLINE`/`OFFLINE`), `zone_samples` persistence (`<= 1 per 2 s` per zone with data), advisory expiry (`advisory:retracted {id}`), and hourly retention delete (`zone_samples > 7 days`).
+  - **Tests & Smoke Check**:
+    - Added `tests/integration/test_alerts_lifecycle.py`, `tests/integration/test_advisories_history.py`, extended `tests/integration/test_role_matrix.py` (all 32 routes).
+    - Full suite (`python -m pytest tests/ -v --tb=short`): **`200 passed, 1 skipped in 18.19s`**.
+    - Smoke test (`flask db upgrade`, `flask seed-demo`, `run_fake_feed(..., profile='ramp')`, `GET /api/v1/alerts`, police `SocketIOTestClient`): alert created + escalated (`peak_level='CRITICAL'`, `GET /alerts` status `200`), Socket.IO police client received `['alert:new', 'alert:escalated']`.
 
 ## In progress
-- None (Phase B4a complete on `be/b4a-zone-engine`; ready for review/commit. Phase B4b not started).
+- None (Phase B4b complete on `be/b4b-wire-engine`; ready for review/commit. Phase B5 not started).
 
 ## Blocked / questions for Person A
 - None.
 
 ## Requests for AI-B (frontend)
-- No API or event changes in B4a (pure engine only; B4b will wire alerts/advisories/history REST + 1 Hz background loop).
+- M3 backend is live on `be/b4b-wire-engine`: alerts (`/alerts*`), advisories (`/advisories*`), zone history (`/zones/{id}/history`), nearest-SAFE `alternatives` on `/zones/{id}/public`, and realtime events (`zone:update`, `zone:detail`, `alert:new`, `alert:updated`, `alert:escalated`, `source:status`, `advisory:new`, `advisory:retracted`).
+- Run `flask fake-feed --zone 1 --profile ramp --serve` from `backend/` to drive a live demo server on `:5000`.
 
 ## Untested / known issues
-- Integration with SQLite transactions, `AlertService.apply(actions)`, 1 Hz `tasks.py` loop, and Socket.IO emitters is deferred to Phase B4b as scoped.
-- Carried over from B0-B3: `--serve` subprocess live browser test, real WebSocket TCP handshake, `SAFE` `alternatives` ranking over REST, `flask set-password` failure paths, `413 PAYLOAD_TOO_LARGE`, and `test_journal_mode_wal` on `:memory:` SQLite (covered by `test_journal_mode_wal_on_file_db`).
+- Live external browser WebSocket + `--serve` subprocess test (in-process `SocketIOTestClient` and background loop thread with `app_context` were verified).
+- Retention deletion of citizen `reports > REPORT_RETENTION_DAYS` will hook into the hourly retention step once `ReportService` / B7 lands (B4b prunes `zone_samples > 7 days`).
+- Carried over from B0: `flask set-password` failure paths, `413 PAYLOAD_TOO_LARGE`, and `test_journal_mode_wal` on `:memory:` SQLite (covered by `test_journal_mode_wal_on_file_db`).
 
 ## Next 3 steps
-1. Review and commit `be/b4a-zone-engine`, merge into `main`.
-2. Begin Phase B4b (M3 part 2b): wire `ZoneEngine` into `Container` & `DetectionManager` (removing `_stub_b3.py`), build `AlertService.apply`, alert/advisory REST endpoints, `/zones/{id}/history`, and 1 Hz `tasks.py` loop.
-3. Begin Phase B5 (M4): separate-process YOLOv8n worker, `frame:submit` / `frame:result`, and per-source leases.
+1. Review and commit `be/b4b-wire-engine`, merge into `main`.
+2. Begin Phase B5 (M4): separate-process YOLOv8n worker, `frame:submit` / `frame:result`, per-source leases (`SOURCE_IN_USE`), queue-full `DETECTOR_BUSY`.
+3. Begin Phase B6 (M5): `WebPushNotifier` (`pywebpush` + `py-vapid`) and `/push/*` endpoints.
 
 ## Numbers (latency, MAE, coverage) once available
-- `app/engine/` unit coverage: **97%** (`alert_rules.py` 100%, `smoothing.py` 100%, `zone_machine.py` 99%, `zone_engine.py` 98%).
+- Pure `app/engine/` unit coverage: **97%** (measured in B4a). Latency/MAE pending B5/B9.

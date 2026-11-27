@@ -21,7 +21,7 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
-from app.core.clock import Clock, SystemClock  # noqa: E402
+from app.core.clock import Clock, FakeClock, SystemClock  # noqa: E402
 from app.core.errors import NotFound, ValidationAppError  # noqa: E402
 from app.detection.detector import FakeDetector  # noqa: E402
 from app.detection.manager import DetectionManager  # noqa: E402
@@ -167,7 +167,16 @@ def run_fake_feed(
             raise NotFound(f"Zone {zone_id} has no active sources.")
         source = sources[0]
 
-    active_clock: Clock = clock or container.clock or SystemClock()
+    sim_clock: FakeClock | None = None
+    if clock is not None:
+        active_clock: Clock = clock
+    elif speed != 1.0:
+        # Preserve simulated 1 Hz engine timestamps when fast-forwarding playback
+        sim_clock = FakeClock(start=(container.clock or SystemClock()).time())
+        active_clock = sim_clock
+    else:
+        active_clock = container.clock or SystemClock()
+
     detector = (
         container.detection_manager.detector
         if isinstance(container.detection_manager.detector, FakeDetector)
@@ -199,8 +208,11 @@ def run_fake_feed(
         results.append(state)
         if on_step is not None:
             on_step(idx + 1, total, count, state)
-        if idx + 1 < total and delay_s > 0:
-            sleep_fn(delay_s)
+        if idx + 1 < total:
+            if sim_clock is not None:
+                sim_clock.advance(float(step_interval_s))
+            if delay_s > 0:
+                sleep_fn(delay_s)
 
     return results
 

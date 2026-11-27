@@ -74,10 +74,14 @@ def clean_db(app):
     def _reset_mem() -> None:
         c = app.extensions.get("container")
         if c is not None:
-            if hasattr(c, "engine"):
-                c.engine.reset()
+            if hasattr(c, "zone_engine"):
+                c.zone_engine.reset()
             if hasattr(c, "emitter"):
                 c.emitter.reset()
+            if hasattr(c, "source_status_tracker"):
+                c.source_status_tracker.reset()
+            if hasattr(c, "task_state"):
+                c.task_state.reset()
 
     with app.app_context():
         _reset_mem()
