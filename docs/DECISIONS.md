@@ -42,3 +42,10 @@ Person B approved shadcn supporting packages `tw-animate-css`, `next-themes`, an
 ## Pending clarification — display timezone
 
 Shared contract §1 specifies Asia/Kolkata display time; §14.5 says browser-local UI time. F0 only formats relative time, so it does not choose between these conflicting absolute-time rules. Clarify before adding absolute timestamp displays. Analytics remains explicitly bucketed in Asia/Kolkata as specified.
+
+---
+
+**B5b — Keep PyTorch `.pt` CPU backend as default over OpenVINO/ONNX export.**
+*Decision:* Keep `people_model.pt` (`UltralyticsDetector` with PyTorch CPU `+cpu` wheel) as the default `MODEL_PATH` runtime instead of converting/defaulting to OpenVINO or ONNX.
+*Rationale:* On the target laptop (`AMD Ryzen 7 7840HS`), running `eval/eval_latency.py` with `DETECTOR_BACKEND=ultralytics` and `imgsz=640` through the full spawned worker + Socket.IO pipeline measured `infer_ms` `p50=36.67 ms` / `p95=112.78 ms` and end-to-end `p50=45.61 ms` / `p95=123.96 ms` (target `< 1500 ms`), leaving >12x latency headroom without adding compiled-runtime dependencies (`openvino` / `onnxruntime`).
+*Impact:* Deployment stays simpler with one `.pt` artifact and `pip check` stays clean; OpenVINO/ONNX export can still be added later if deployed on slower CPUs.

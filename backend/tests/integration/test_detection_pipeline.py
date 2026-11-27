@@ -1200,3 +1200,351 @@ class TestAdditionalEdgeAndLifecycleCases:
                     db.engine.dispose()
             assert not proc.is_alive()
             assert proc.exitcode is not None
+
+
+# ---------------------------------------------------------------------------
+# Phase B5b — Real UltralyticsDetector Spawned Worker Integration Tests
+# ---------------------------------------------------------------------------
+def _real_detector_Skip_reason() -> str | None:
+    import importlib.util
+    from pathlib import Path
+
+    for mod in ("torch", "ultralytics", "cv2", "supervision"):
+        if importlib.util.find_spec(mod) is None:
+            return f"Optional B5b dependency {mod!r} is not installed"
+
+    repo_root = Path(__file__).resolve().parents[3]
+    for candidate in (
+        Path(os.environ.get("MODEL_PATH", "")) if os.environ.get("MODEL_PATH") else Path("__none__"),
+        repo_root / "people_model.pt",
+        repo_root / "docs" / "model" / "best.pt",
+    ):
+        if candidate.is_file():
+            return None
+    return "No YOLO .pt weights found (people_model.pt or MODEL_PATH)"
+
+
+def _find_real_model_path() -> str:
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[3]
+    for candidate in (
+        Path(os.environ.get("MODEL_PATH", "")) if os.environ.get("MODEL_PATH") else Path("__none__"),
+        repo_root / "people_model.pt",
+        repo_root / "docs" / "model" / "best.pt",
+    ):
+        if candidate.is_file():
+            return str(candidate.resolve())
+    raise FileNotFoundError("No YOLO model found")
+
+
+def _encode_asset_jpeg(filename: str, max_width: int = 640) -> tuple[bytes, int, int]:
+    import importlib.util
+    from pathlib import Path
+    import cv2
+
+    # Locate ultralytics/assets without importing ultralytics/torch into the main process
+    spec = importlib.util.find_spec("ultralytics")
+    assert spec is not None and spec.submodule_search_locations
+    asset = Path(list(spec.submodule_search_locations)[0]) / "assets" / filename
+    img = cv2.imread(str(asset))
+    assert img is not None, f"Missing sample asset {asset}"
+    h, w = int(img.shape[0]), int(img.shape[1])
+    if w > max_width:
+        scale = max_width / float(w)
+        w = max_width
+        h = max(1, int(round(h * scale)))
+        img = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+    assert ok
+    return buf.tobytes(), w, h
+
+
+_REAL_SKIP = _real_detector_Skip_reason()
+
+
+@pytest.mark.skipif(_REAL_SKIP is not None, reason=_REAL_SKIP or "")
+class TestUltralyticsRealWorkerEndToEnd:
+    """Real YOLOv8 inference inside the spawned worker process (skipped if torch/model absent)."""
+
+    def test_real_ultralytics_worker_counts_boxes_health_and_zero_writes(
+        self, app, client, seeded_pipeline, monkeypatch
+    ):
+        import dataclasses
+        import sys
+        from app.detection.manager import DetectionManager
+
+        old_container = app.extensions["container"]
+        model_path = _find_real_model_path()
+        real_mgr = DetectionManager(
+            backend="ultralytics",
+            use_tracker=False,
+            model_path=model_path,
+            zone_engine=old_container.zone_engine,
+            engine_lock=old_container.engine_lock,
+            alert_service=old_container.alert_service,
+            emitter=old_container.emitter,
+            zone_repo=old_container.zone_repo,
+            source_repo=old_container.source_repo,
+            settings_service=old_container.settings_service,
+            source_status_tracker=old_container.source_status_tracker,
+            clock=old_container.clock,
+            restart_backoffs=(0.1, 0.2, 0.4),
+        )
+        # Main process must NOT import torch when building/starting Ultralytics backend
+        assert "torch" not in sys.modules
+        assert real_mgr.detector is None
+
+        app.extensions["container"] = dataclasses.replace(
+            old_container, detection_manager=real_mgr
+        )
+        real_mgr.start(app)
+        assert real_mgr.wait_until_ready(timeout=20.0) is True
+        assert "torch" not in sys.modules
+
+        source_id = seeded_pipeline["source"]["id"]
+        zidane_jpg, zw, zh = _encode_asset_jpeg("zidane.jpg")
+        bus_jpg, bw, bh = _encode_asset_jpeg("bus.jpg")
+
+        write_opens: list[str] = []
+        orig_open = builtins.open
+
+        def _spy_open(file, mode="r", *args, **kwargs):
+            if any(ch in str(mode) for ch in ("w", "a", "x", "+")):
+                write_opens.append(str(file))
+            return orig_open(file, mode, *args, **kwargs)
+
+        def _forbid_temp(*args, **kwargs):
+            raise AssertionError("Pipeline must never create temp files")
+
+        monkeypatch.setattr(builtins, "open", _spy_open)
+        monkeypatch.setattr(tempfile, "TemporaryFile", _forbid_temp)
+        monkeypatch.setattr(tempfile, "NamedTemporaryFile", _forbid_temp)
+        monkeypatch.setattr(tempfile, "mkstemp", _forbid_temp)
+
+        p1 = _sio_client(app, seeded_pipeline["p1_tok"])
+        p1.get_received()
+        try:
+            hc = client.get("/api/v1/health").get_json()
+            assert hc["detector"] == "ready"
+            assert hc["worker_alive"] is True
+
+            # 1. Submit zidane.jpg (2 people visible)
+            p1.emit(
+                "frame:submit",
+                {
+                    "source_id": source_id,
+                    "seq": 1,
+                    "reset": True,
+                    "width": zw,
+                    "height": zh,
+                    "image": zidane_jpg,
+                },
+            )
+            r1_list = _wait_for_events(p1, "frame:result", min_count=1, timeout=10.0)
+            assert len(r1_list) == 1
+            r1 = r1_list[0]
+            assert r1["ok"] is True
+            assert 1 <= r1["count"] <= 3  # 2 people in zidane.jpg (±1 tolerance)
+            assert len(r1["boxes"]) == r1["count"]
+            assert r1["infer_ms"] > 0.0
+            for x1, y1, x2, y2, c in r1["boxes"]:
+                assert 0.0 <= x1 < x2 <= 1.0
+                assert 0.0 <= y1 < y2 <= 1.0
+                assert c >= 0.35
+
+            # 2. Submit bus.jpg (~3-4 people visible -> WARNING/CRITICAL on COUNT W=3)
+            p1.emit(
+                "frame:submit",
+                {
+                    "source_id": source_id,
+                    "seq": 2,
+                    "reset": True,
+                    "width": bw,
+                    "height": bh,
+                    "image": bus_jpg,
+                },
+            )
+            r2_list = _wait_for_events(p1, "frame:result", min_count=1, timeout=10.0)
+            assert len(r2_list) == 1
+            r2 = r2_list[0]
+            assert r2["ok"] is True
+            assert 2 <= r2["count"] <= 5  # ~3-4 people in bus.jpg (±1-2 tolerance)
+            assert len(r2["boxes"]) == r2["count"]
+            assert r2["level"] in ("WARNING", "CRITICAL")
+
+            # 3. Synchronous detect_once on zidane.jpg
+            once = real_mgr.detect_once(zidane_jpg, timeout=10.0)
+            assert once.ok is True
+            assert 1 <= once.count <= 3
+            assert len(once.boxes) == once.count
+
+            assert write_opens == [], f"Unexpected disk writes: {write_opens}"
+        finally:
+            monkeypatch.undo()
+            if p1.is_connected():
+                p1.disconnect()
+            real_mgr.stop(timeout=5.0)
+            app.extensions["container"] = old_container
+
+    def test_real_ultralytics_worker_kill_restarts_cleanly(
+        self, app, client, seeded_pipeline
+    ):
+        import dataclasses
+        from app.detection.manager import DetectionManager
+
+        old_container = app.extensions["container"]
+        real_mgr = DetectionManager(
+            backend="ultralytics",
+            use_tracker=False,
+            model_path=_find_real_model_path(),
+            zone_engine=old_container.zone_engine,
+            engine_lock=old_container.engine_lock,
+            alert_service=old_container.alert_service,
+            emitter=old_container.emitter,
+            zone_repo=old_container.zone_repo,
+            source_repo=old_container.source_repo,
+            settings_service=old_container.settings_service,
+            source_status_tracker=old_container.source_status_tracker,
+            clock=old_container.clock,
+            restart_backoffs=(0.1, 0.2, 0.4),
+        )
+        app.extensions["container"] = dataclasses.replace(
+            old_container, detection_manager=real_mgr
+        )
+        real_mgr.start(app)
+        try:
+            assert real_mgr.wait_until_ready(timeout=20.0) is True
+            old_pid = real_mgr.worker_pid
+            assert old_pid is not None
+            os.kill(old_pid, signal.SIGTERM)
+
+            deadline = time.monotonic() + 20.0
+            while time.monotonic() < deadline:
+                if (
+                    real_mgr.worker_pid is not None
+                    and real_mgr.worker_pid != old_pid
+                    and real_mgr.detector_status == "ready"
+                ):
+                    break
+                time.sleep(0.05)
+
+            assert real_mgr.worker_pid is not None and real_mgr.worker_pid != old_pid
+            assert real_mgr.restart_count >= 1
+            hc = client.get("/api/v1/health").get_json()
+            assert hc["detector"] == "ready"
+            assert hc["worker_alive"] is True
+
+            # Verify re-warmed worker accurately scores a subsequent valid frame
+            p1 = _sio_client(app, seeded_pipeline["p1_tok"])
+            p1.get_received()
+            try:
+                zidane_jpg, zw, zh = _encode_asset_jpeg("zidane.jpg")
+                p1.emit(
+                    "frame:submit",
+                    {
+                        "source_id": seeded_pipeline["source"]["id"],
+                        "seq": 1,
+                        "reset": True,
+                        "width": zw,
+                        "height": zh,
+                        "image": zidane_jpg,
+                    },
+                )
+                post = _wait_for_events(p1, "frame:result", min_count=1, timeout=10.0)
+                assert len(post) == 1
+                assert post[0]["ok"] is True
+                assert 1 <= post[0]["count"] <= 3
+            finally:
+                if p1.is_connected():
+                    p1.disconnect()
+        finally:
+            real_mgr.stop(timeout=5.0)
+            app.extensions["container"] = old_container
+
+    def test_real_worker_decode_failure_returns_bad_image_preserves_zone_and_recovers(
+        self, app, client, seeded_pipeline
+    ):
+        """A header-valid JPEG that fails cv2.imdecode() must return BAD_IMAGE (not
+        DETECTOR_UNAVAILABLE), never feed 0 into ZoneEngine to lower an active alert/count,
+        and leave the worker healthy for the next valid frame.
+        """
+        import dataclasses
+        from app.detection.manager import DetectionManager
+
+        old_container = app.extensions["container"]
+        real_mgr = DetectionManager(
+            backend="ultralytics",
+            use_tracker=False,
+            model_path=_find_real_model_path(),
+            zone_engine=old_container.zone_engine,
+            engine_lock=old_container.engine_lock,
+            alert_service=old_container.alert_service,
+            emitter=old_container.emitter,
+            zone_repo=old_container.zone_repo,
+            source_repo=old_container.source_repo,
+            settings_service=old_container.settings_service,
+            source_status_tracker=old_container.source_status_tracker,
+            clock=old_container.clock,
+            restart_backoffs=(0.1, 0.2, 0.4),
+        )
+        app.extensions["container"] = dataclasses.replace(
+            old_container, detection_manager=real_mgr
+        )
+        real_mgr.start(app)
+        assert real_mgr.wait_until_ready(timeout=20.0) is True
+
+        source_id = seeded_pipeline["source"]["id"]
+        zone_id = seeded_pipeline["zone"]["id"]
+        bus_jpg, bw, bh = _encode_asset_jpeg("bus.jpg")
+        zidane_jpg, zw, zh = _encode_asset_jpeg("zidane.jpg")
+        header_only_jpg = make_test_jpeg(640, 480)  # Valid SOI+APP0+SOF0+EOI, no scan data
+
+        p1 = _sio_client(app, seeded_pipeline["p1_tok"])
+        p1.get_received()
+        try:
+            # 1. Drive zone to WARNING/CRITICAL with bus.jpg
+            p1.emit(
+                "frame:submit",
+                {"source_id": source_id, "seq": 1, "reset": True, "width": bw, "height": bh, "image": bus_jpg},
+            )
+            r_valid = _wait_for_events(p1, "frame:result", min_count=1, timeout=10.0)
+            assert len(r_valid) == 1 and r_valid[0]["ok"] is True
+            prior_zone = client.get(
+                f"/api/v1/zones/{zone_id}", headers=_auth(seeded_pipeline["p1_tok"])
+            ).get_json()["data"]
+            assert prior_zone["level"] in ("WARNING", "CRITICAL")
+            assert prior_zone["count"] >= 2.0
+
+            # 2. Submit header-valid but undecodable JPEG -> BAD_IMAGE, zero ZoneEngine change
+            p1.emit(
+                "frame:submit",
+                {"source_id": source_id, "seq": 2, "width": 640, "height": 480, "image": header_only_jpg},
+            )
+            r_bad = _wait_for_events(p1, "frame:result", min_count=1, timeout=10.0)
+            assert len(r_bad) == 1
+            assert r_bad[0]["ok"] is False
+            assert r_bad[0]["error"] == "BAD_IMAGE"
+            assert r_bad[0]["smoothed_count"] is None
+            assert r_bad[0]["level"] is None
+
+            zone_after = client.get(
+                f"/api/v1/zones/{zone_id}", headers=_auth(seeded_pipeline["p1_tok"])
+            ).get_json()["data"]
+            assert zone_after["count"] == prior_zone["count"]
+            assert zone_after["level"] == prior_zone["level"]
+
+            # 3. Worker handles next valid frame cleanly
+            p1.emit(
+                "frame:submit",
+                {"source_id": source_id, "seq": 3, "reset": True, "width": zw, "height": zh, "image": zidane_jpg},
+            )
+            r_next = _wait_for_events(p1, "frame:result", min_count=1, timeout=10.0)
+            assert len(r_next) == 1
+            assert r_next[0]["ok"] is True
+            assert 1 <= r_next[0]["count"] <= 3
+        finally:
+            if p1.is_connected():
+                p1.disconnect()
+            real_mgr.stop(timeout=5.0)
+            app.extensions["container"] = old_container

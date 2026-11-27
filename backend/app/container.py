@@ -145,6 +145,7 @@ def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container
     detection_manager = DetectionManager(
         backend=cfg.detector_backend,
         use_tracker=cfg.use_tracker,
+        model_path=cfg.model_path,
         zone_engine=zone_engine,
         engine_lock=engine_lock,
         alert_service=alert_service,
