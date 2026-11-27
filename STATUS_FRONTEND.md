@@ -1,5 +1,15 @@
 # Frontend status — 27 November 2026
 
+## F2 — Public screens and realtime complete on the mock
+
+The public map, zone detail, advisories and help routes use the public REST contract. A shared Socket.IO connection follows the session token, resyncs active queries on hello and displays a stale-data bar during disconnects. MapLibre loads on demand using the OpenFreeMap Liberty style. The map and list share a selection and the zone list stays accessible when the map fails.
+
+On fe/f2-public-map, npm.cmd test passed 98 tests in 10 files. Lint, all 43 fixtures, typecheck and the production build passed. The ZoneMap JS chunk was 310.93 kB gzip, separate from the entry and worker. Vite emitted its large-chunk warning. The Windows checkout caused 83 line-ending warnings from the default format check. Prettier passed with --end-of-line auto.
+
+Headless Edge at 360 px verified the mock ramp, polygon and list selection, stable map dimensions when the sheet opened, stale status after mock shutdown, REST resync after restart, and authenticated socket refresh. Browser axe found zero violations across all four routes. The final four-route browser pass recorded zero console errors. Testing caught and corrected a missing glyph font, advisory heading order, and map controls and polygons underneath the mobile sheet. Physical devices and the real Flask backend were outside this mock run.
+
+F2 is ready for human review. Contract 1.1.0 applies. The absolute display timezone question remains open for later work. The clean F2 branch was fast-forwarded to F1 before implementation.
+
 ## F1 — Authentication and route guards complete, pending human review
 
 Login, citizen registration, session restoration via /auth/me, single-flight refresh, role guards, role-aware navigation and logout are implemented on `fe/f1-auth`. Protected redirects preserve path, query and fragment. A failed refresh clears the session and query cache, returns to login and shows an expiry toast. Logout has an extension point for F5 push cleanup.

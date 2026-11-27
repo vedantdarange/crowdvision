@@ -25,6 +25,26 @@ function unauthenticated(error: unknown) {
     error.code === 'UNAUTHENTICATED'
   );
 }
+export async function refreshSession() {
+  const { tokens, generation } = useSession.getState();
+  if (!tokens) return;
+  if (pending?.generation !== generation) {
+    const promise = refresh(tokens.refresh_token)
+      .then(({ data }) => {
+        if (useSession.getState().generation === generation)
+          useSession.getState().updateAccess(data.access_token);
+      })
+      .catch((failure) => {
+        expire(generation);
+        throw failure;
+      })
+      .finally(() => {
+        if (pending?.generation === generation) pending = undefined;
+      });
+    pending = { generation, promise };
+  }
+  await pending.promise;
+}
 export async function apiClient<T>(
   path: string,
   options: ApiOptions = {},
@@ -42,22 +62,7 @@ export async function apiClient<T>(
     )
       throw error;
     if (useSession.getState().tokens?.access_token === token) {
-      if (pending?.generation !== generation) {
-        const promise = refresh(tokens.refresh_token)
-          .then(({ data }) => {
-            if (useSession.getState().generation === generation)
-              useSession.getState().updateAccess(data.access_token);
-          })
-          .catch((failure) => {
-            expire(generation);
-            throw failure;
-          })
-          .finally(() => {
-            if (pending?.generation === generation) pending = undefined;
-          });
-        pending = { generation, promise };
-      }
-      await pending.promise;
+      await refreshSession();
     }
     if (generation !== useSession.getState().generation) throw error;
     try {

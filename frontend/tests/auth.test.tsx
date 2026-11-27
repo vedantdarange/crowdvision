@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render } from './renderPublic';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
