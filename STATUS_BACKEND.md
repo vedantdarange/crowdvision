@@ -1,34 +1,48 @@
-# Backend status — updated 2026-11-27 01:43 IST
-## Phase: B1 (done)
+# Backend status — updated 2026-11-27 10:53 IST
+## Phase: B2 (done)
 ## Done since last update
-- Implemented strict layered B1 stack (`blueprint -> service -> repository -> model`) on branch `be/b1-auth`:
-  - Validation & schemas: `app/core/validation.py` (`parse_json_body`, `validate`), `app/schemas/auth.py`, `app/schemas/users.py` (`serialize_user`, never exposes `password_hash`).
-  - Repositories: `app/repositories/user_repo.py`, `app/repositories/audit_repo.py`.
-  - Services: `app/services/audit_service.py`, `app/services/auth_service.py` (argon2 hashing, generic 401 on login mismatch, disabled user -> 403, refresh re-checks `is_active` and DB role), `app/services/user_service.py` (admin user creation, self-disable/self-demote -> 409 CONFLICT, `USER_CREATED` and `USER_UPDATED` audit logs without passwords).
-  - RBAC & JWT: `app/core/auth.py` (`roles_required` with single hierarchy rule `admin` satisfies `police`, re-reads DB user/role/`is_active` on every request, exposes `g.current_user`; `configure_jwt_error_loaders` routes missing/invalid/expired/wrong-type JWT errors through our `401 UNAUTHENTICATED` contract envelope).
-  - DI & Routes: `app/container.py` (`Container`, `wire(flask_app)`), `app/api/v1/auth.py` (`/register`, `/login`, `/refresh`, `/me`), `app/api/v1/users.py` (`GET /users`, `POST /users`, `PATCH /users/{id}`).
-  - Rate limiting: `Flask-Limiter` on `/auth/register` (`10/hour`, configurable via `RATELIMIT_REGISTER`) and `/auth/login` (`20/minute`, configurable via `RATELIMIT_LOGIN`), returning `429 RATE_LIMITED` in our envelope and keyed on `request.remote_addr` (real client IP after `ProxyFix`). Removed global default limit so non-auth endpoints are unaffected.
-- Added and ran B1 tests: `tests/unit/test_auth_unit.py`, `tests/integration/test_auth.py`, `tests/integration/test_users.py`, `tests/integration/test_role_matrix.py`, `tests/integration/test_rate_limit.py`.
-- Fixed `tests/conftest.py` `app` fixture so `app_context` is closed after `db.create_all()`, ensuring per-request session teardown (`db.session.remove()`) runs cleanly between requests.
+- Implemented Phase B2 (M2) on branch `be/b2-zones-realtime` following strict layering (`blueprint -> service -> repository -> model`) and Pydantic v2 validation:
+  - **Schemas & Serializers**:
+    - `app/schemas/zones.py` (`ZoneCreateRequest`, `ZonePatchRequest` — closed GeoJSON Polygon `[lng, lat]` with >= 3 distinct vertices, `shapely` `is_valid` + `exterior.is_simple`, `warning < critical` for density and counts, COUNT mode requires both counts).
+    - `app/schemas/sources.py` (`SourceCreateRequest`, `SourcePatchRequest`).
+    - `app/schemas/config.py` (`SettingsPatchRequest`, `HelpInfoSchema` with validated numeric ranges).
+    - `app/schemas/serializers.py` (pure functions `serialize_public_zone`, `serialize_zone`, `serialize_source` + `LIVE_STATE_PLACEHOLDER` with `level="NO_DATA"`, `trend="STEADY"`, `density=None`, `count=None`, `live_updated_at=None`).
+  - **Repositories & Services**:
+    - `app/repositories/zone_repo.py`, `app/repositories/source_repo.py`, `app/repositories/settings_repo.py` (flush-within-transaction pattern so mutations and audit logs commit atomically).
+    - `app/services/zone_service.py`: `/zones/live`, `/zones/{id}/public` (`{state, alternatives}` with nearest-3 SAFE helper), `/zones`, `/zones/{id}`, `POST /zones`, `PATCH /zones/{id}`, `DELETE /zones/{id}` (soft delete; 409 CONFLICT with open alert; frees name for reuse; server recomputes centroid + `area_m2` via `app/core/geometry.py`, 422 if client hint > 10% off, `1 <= area_m2 <= 10_000_000`, defaults from settings 3.0 / 4.0).
+    - `app/services/source_service.py`: `/sources`, `POST /sources`, `PATCH /sources/{id}`, `DELETE /sources/{id}` (`coverage_area_m2` defaults to zone area, validated `1 <= coverage <= 2 * area`, admin-only — police sending it gets 403 `FORBIDDEN`; status always `OFFLINE`, `last_frame_at` null until B5).
+    - `app/services/settings_service.py`: `/config` (`RuntimeConfig`, `vapid_public_key: null`, `contract_version` read from `contract/CONTRACT_VERSION`), `/help-info`, `/settings` GET/PATCH (defaults matching `app/cli.py` and contract §4.2/§5).
+      - Validated `/settings` numeric ranges (default -> `[min, max]`): `detect_conf` `0.35` -> `[0.1, 0.9]`, `smoothing_window` `5` -> `[1, 15]` (int), `debounce_s` `3` -> `[0, 30]`, `clear_s` `8` -> `[0, 60]`, `hysteresis_ratio` `0.85` -> `[0.5, 0.99]`, `cooldown_s` `60` -> `[0, 600]`, `escalation_s` `60` -> `[10, 600]`, `stale_after_s` `10` -> `[3, 60]`, `reraise_after_s` `60` -> `[10, 600]`, `target_fps` `3` -> `[1, 10]` (int), `frame_width` `640` -> `[320, 1280]` (int), `jpeg_quality` `0.7` -> `[0.3, 0.95]`, `default_warning_density` `3.0` -> `[0.1, 10.0]`, `default_critical_density` `4.0` -> `[0.1, 10.0]` (plus `default_warning_density < default_critical_density` cross-check).
+    - Audit entries logged atomically for `ZONE_CREATED`, `ZONE_UPDATED`, `ZONE_DELETED`, `SOURCE_CREATED`, `SOURCE_UPDATED`, `SOURCE_DELETED`, `SETTINGS_UPDATED`.
+  - **Realtime (Socket.IO connect & session freshness)**:
+    - `app/realtime/connect.py`: `on_connect` / `on_disconnect` registered before `socketio.init_app()` in `app/__init__.py`. Every client joins `public`; valid active users also join `user:{id}`, `role:police` (police + admin), `role:admin` (admin); invalid/expired/disabled tokens stay `public` and emit `auth:expired`; always emits `hello` `{role, server_time, contract_version}`.
+    - Lock-guarded `sessions[sid]` registry and `enforce_session_freshness(now)` (leaves privileged rooms, emits `auth:expired`, disconnects expired/disabled/demoted sockets).
+  - **Tests**:
+    - Added `tests/integration/test_zones.py`, `tests/integration/test_sources.py`, `tests/integration/test_config.py`, `tests/integration/test_socketio.py`, `tests/unit/test_realtime.py`.
+    - Extended `tests/integration/test_role_matrix.py` with all B2 routes.
+    - Test suite result: `python -m pytest tests/ -v --tb=short` -> `144 passed, 1 skipped in 14.54s`.
+    - Smoke test against seeded `backend/instance/app.db`: `GET /api/v1/zones/live` returned `200` with `Main Gate`, `Stage Area`, `Exit Lane` all at `NO_DATA`; Socket.IO `hello` returned `{'role': None, 'server_time': ..., 'contract_version': '1.1.0'}`.
 
 ## In progress
-- None (Phase B1 complete on `be/b1-auth`, awaiting Phase B2).
+- None (Phase B2 complete on `be/b2-zones-realtime`, ready for review/commit; Phase B3 not started).
 
 ## Blocked / questions for Person A
-- `contract/examples/` still does not contain fixtures from AI-B (`health`, `user`, `auth`, `error_*`).
+- None (confirmed `GET /api/v1/zones?include_inactive=true` returns `403` for `police`, and `PATCH /api/v1/sources/{id}` stays `admin`-only per contract §6.2).
 
 ## Requests for AI-B (frontend)
-- Please create `contract/examples/` fixtures (`health.json`, `user.json`, `error_*.json`) and `contract/CONTRACT_VERSION` (`1.1.0`) when ready; backend can now serve real `/auth/*` and `/users/*` endpoints.
+- Please create `contract/examples/` fixtures when ready so backend contract tests can validate against them.
+- `GET /api/v1/zones/live`, `GET /api/v1/zones/{id}/public`, `GET /api/v1/config`, `GET /api/v1/help-info`, and Socket.IO `hello` / `auth:expired` are ready on `be/b2-zones-realtime`.
+- Validated `/settings` ranges for F7b are listed above under `Done since last update` (and in `backend/app/schemas/config.py` / `backend/app/services/settings_service.py`).
 
 ## Untested / known issues
-- `flask set-password` failure cases (unknown email, password < 8 chars) and `413 PAYLOAD_TOO_LARGE` (>5 MB upload) remain untested (carried from B0).
-- `TestSQLitePragmas.test_journal_mode_wal` skips on `:memory:` SQLite (WAL mode is verified separately in `test_journal_mode_wal_on_file_db`).
-- Run all `flask` CLI commands from `backend/` so Flask discovers `wsgi.py`.
+- Socket.IO real TCP/WebSocket handshake from an external browser client (tested via `SocketIOTestClient` in-process).
+- Real live `SAFE` zone ranking in `GET /zones/{id}/public` `alternatives` could only be tested by injecting mocked `live_states` into `ZoneService.get_public(...)` since the engine (B4) is not built yet (`GET /zones/live` and `/zones/{id}/public` over REST only return `NO_DATA`).
+- Carried over from B0: `flask set-password` failure paths and `413 PAYLOAD_TOO_LARGE` (> 5 MB upload) remain untested; `test_journal_mode_wal` skips on `:memory:` SQLite (covered by `test_journal_mode_wal_on_file_db`).
 
 ## Next 3 steps
-1. Review and merge `be/b1-auth` into `main`.
-2. Begin Phase B2 (M2): Zones, sources, settings, config, help-info CRUD + Socket.IO connect/`hello`/`auth:expired`/session registry.
-3. Extend `tests/integration/test_role_matrix.py` (`ROUTE_MATRIX`) with all B2 endpoints.
+1. Review and commit `be/b2-zones-realtime`, merge into `main`.
+2. Begin Phase B3 (M3 part 1): `Clock` integration, `FakeDetector`, `scripts/fake_feed.py` / `flask fake-feed` (`ramp`, `spike`, `flap`, `offline`).
+3. Begin Phase B4 (M3 part 2): pure zone/alert engine, alert endpoints, advisories, `/zones/{id}/history`, and 1 Hz `tasks.py` loop.
 
 ## Numbers (latency, MAE, coverage) once available
 - Not yet measured (B5 / B9).

@@ -7,7 +7,7 @@ Every route in the API is listed in ROUTE_MATRIX with its required role level:
   - 'police'  : police or admin
   - 'admin'   : admin only
 
-As new routes are added in B2+, append them to ROUTE_MATRIX.
+As new routes are added in B3+, append them to ROUTE_MATRIX.
 """
 from __future__ import annotations
 
@@ -15,9 +15,31 @@ from typing import Any
 
 import pytest
 
+_RM_POLYGON = {
+    "type": "Polygon",
+    "coordinates": [[
+        [77.2090, 28.6139],
+        [77.2094, 28.6139],
+        [77.2094, 28.6143],
+        [77.2090, 28.6143],
+        [77.2090, 28.6139],
+    ]],
+}
+
+_ZONE_BODY = {
+    "name": "RM Created Zone",
+    "description": "",
+    "geometry": _RM_POLYGON,
+    "mode": "DENSITY",
+    "warning_density": 2.0,
+    "critical_density": 4.0,
+}
+
 # (method, path_or_template, required_level, json_body_for_allowed)
 ROUTE_MATRIX: list[tuple[str, str, str, dict[str, Any] | None]] = [
+    # --- B0 ---
     ("GET", "/api/v1/health", "public", None),
+    # --- B1 Auth & Users ---
     (
         "POST",
         "/api/v1/auth/register",
@@ -45,6 +67,24 @@ ROUTE_MATRIX: list[tuple[str, str, str, dict[str, Any] | None]] = [
         },
     ),
     ("PATCH", "/api/v1/users/{target_id}", "admin", {"name": "Updated Target"}),
+    # --- B2 Zones ---
+    ("GET", "/api/v1/zones/live", "public", None),
+    ("GET", "/api/v1/zones/{zone_id}/public", "public", None),
+    ("GET", "/api/v1/zones", "police", None),
+    ("GET", "/api/v1/zones/{zone_id}", "police", None),
+    ("POST", "/api/v1/zones", "admin", _ZONE_BODY),
+    ("PATCH", "/api/v1/zones/{zone_id}", "admin", {"name": "Updated RM Zone"}),
+    ("DELETE", "/api/v1/zones/{zone_id}", "admin", None),
+    # --- B2 Sources ---
+    ("GET", "/api/v1/sources", "police", None),
+    ("POST", "/api/v1/sources", "police", {"zone_id": "{zone_id}", "name": "Cam RM", "kind": "WEBCAM"}),
+    ("PATCH", "/api/v1/sources/{source_id}", "admin", {"name": "Cam RM Updated"}),
+    ("DELETE", "/api/v1/sources/{source_id}", "admin", None),
+    # --- B2 Config & Settings ---
+    ("GET", "/api/v1/config", "public", None),
+    ("GET", "/api/v1/help-info", "public", None),
+    ("GET", "/api/v1/settings", "admin", None),
+    ("PATCH", "/api/v1/settings", "admin", {"target_fps": 3}),
 ]
 
 _ALLOWED_ROLES = {
@@ -67,57 +107,89 @@ def test_route_role_matrix(
     admin = make_user(name="Adm", email="admin@test.local", role="admin")
     target = make_user(name="Target", email="target@test.local", role="police")
 
-    path = path_tpl.format(target_id=target.id)
-
     tokens_by_role = {
         "citizen": token_for(citizen.id, role="citizen"),
         "police": token_for(police.id, role="police"),
         "admin": token_for(admin.id, role="admin"),
     }
 
+    # Create seed zone / source when needed by route template or body
+    zone_id = 1
+    source_id = 1
+    needs_zone = "{zone_id}" in path_tpl or (body and body.get("zone_id") == "{zone_id}")
+    needs_source = "{source_id}" in path_tpl
+    if needs_zone or needs_source:
+        r_z = client.post(
+            "/api/v1/zones",
+            json={**_ZONE_BODY, "name": "RM Seed Zone"},
+            headers={"Authorization": f"Bearer {tokens_by_role['admin']}"},
+        )
+        assert r_z.status_code == 201
+        zone_id = r_z.get_json()["data"]["id"]
+
+    if needs_source:
+        r_s = client.post(
+            "/api/v1/sources",
+            json={"zone_id": zone_id, "name": "RM Seed Source", "kind": "WEBCAM"},
+            headers={"Authorization": f"Bearer {tokens_by_role['admin']}"},
+        )
+        assert r_s.status_code == 201
+        source_id = r_s.get_json()["data"]["id"]
+
+    path = path_tpl.format(target_id=target.id, zone_id=zone_id, source_id=source_id)
+    resolved_body = dict(body) if body is not None else None
+    if resolved_body and resolved_body.get("zone_id") == "{zone_id}":
+        resolved_body["zone_id"] = zone_id
+
     if level == "public":
-        resp = client.open(path, method=method, json=body)
+        resp = client.open(path, method=method, json=resolved_body)
         assert resp.status_code in (200, 201), f"{method} {path}: got {resp.status_code}"
         return
 
     if level == "refresh":
-        # No token -> 401
         r_no_tok = client.open(path, method=method)
         assert r_no_tok.status_code == 401
         assert r_no_tok.get_json()["error"]["code"] == "UNAUTHENTICATED"
 
-        # Access token -> 401
         r_acc = client.open(
             path, method=method, headers={"Authorization": f"Bearer {tokens_by_role['citizen']}"}
         )
         assert r_acc.status_code == 401
 
-        # Refresh token -> 200
         with app.app_context():
             ref = create_refresh_token(identity=str(citizen.id))
         r_ok = client.open(path, method=method, headers={"Authorization": f"Bearer {ref}"})
         assert r_ok.status_code == 200
         return
 
-    # Protected access-token route
     # 1. Missing token -> 401 UNAUTHENTICATED
-    r_unauth = client.open(path, method=method, json=body)
+    r_unauth = client.open(path, method=method, json=resolved_body)
     assert r_unauth.status_code == 401, f"{method} {path} no token: {r_unauth.status_code}"
     assert r_unauth.get_json()["error"]["code"] == "UNAUTHENTICATED"
 
-    # 2. Check every role
+    # 2. Check every role (test disallowed roles before allowed ones so DELETE doesn't remove resource early)
     allowed = _ALLOWED_ROLES[level]
-    for role_name, tok in tokens_by_role.items():
+    ordered_roles = [r for r in tokens_by_role if r not in allowed] + [
+        r for r in tokens_by_role if r in allowed
+    ]
+    for role_name in ordered_roles:
+        tok = tokens_by_role[role_name]
+        req_body = dict(resolved_body) if resolved_body is not None else None
+        # Keep POST body unique across multiple allowed roles (e.g. police + admin)
+        if method == "POST" and path == "/api/v1/sources" and req_body is not None:
+            req_body["name"] = f"Cam RM {role_name}"
         resp = client.open(
             path,
             method=method,
             headers={"Authorization": f"Bearer {tok}"},
-            json=body,
+            json=req_body,
         )
         if role_name in allowed:
             assert resp.status_code in (200, 201, 204), (
                 f"{method} {path} as {role_name}: expected success, got {resp.status_code} {resp.get_json()}"
             )
+            # If this was DELETE and another allowed role exists, we'd need a new resource,
+            # though DELETE is admin-only so there is only 1 allowed role.
         else:
             assert resp.status_code == 403, (
                 f"{method} {path} as {role_name}: expected 403, got {resp.status_code}"
