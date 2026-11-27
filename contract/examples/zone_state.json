@@ -1,0 +1,64 @@
+{
+  "id": 1,
+  "name": "Main Gate",
+  "description": "Ganesh festival demonstration venue, Pune",
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          73.85527000784715,
+          18.519471560972526
+        ],
+        [
+          73.85532999215285,
+          18.519471560972526
+        ],
+        [
+          73.85532999215285,
+          18.519528439027475
+        ],
+        [
+          73.85527000784715,
+          18.519528439027475
+        ],
+        [
+          73.85527000784715,
+          18.519471560972526
+        ]
+      ]
+    ]
+  },
+  "centroid": {
+    "lat": 18.5195,
+    "lng": 73.8553
+  },
+  "area_m2": 40,
+  "mode": "COUNT",
+  "warning_density": 3,
+  "critical_density": 4,
+  "warning_count": 3,
+  "critical_count": 5,
+  "is_active": true,
+  "created_at": "2026-11-24T10:15:30Z",
+  "updated_at": "2026-11-24T10:15:30Z",
+  "level": "NO_DATA",
+  "trend": "STEADY",
+  "count": null,
+  "density": null,
+  "sources": [
+    {
+      "id": 1,
+      "zone_id": 1,
+      "name": "Main Gate camera",
+      "kind": "WEBCAM",
+      "coverage_area_m2": 25,
+      "is_active": true,
+      "status": "OFFLINE",
+      "last_frame_at": null,
+      "created_at": "2026-11-24T10:15:30Z"
+    }
+  ],
+  "open_alert_id": null,
+  "live_updated_at": null
+}

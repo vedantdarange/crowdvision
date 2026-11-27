@@ -1,0 +1,28 @@
+{
+  "from": "2026-11-24T10:15:30Z",
+  "to": "2026-11-25T10:15:30Z",
+  "alerts_by_zone": [
+    {
+      "zone_id": 1,
+      "zone_name": "Main Gate",
+      "warning": 0,
+      "critical": 1
+    }
+  ],
+  "avg_ack_seconds": null,
+  "avg_resolve_seconds": null,
+  "timezone": "Asia/Kolkata",
+  "peak_hours": [
+    {
+      "zone_id": 1,
+      "zone_name": "Main Gate",
+      "hour": 15,
+      "avg_density": 0.24
+    }
+  ],
+  "reports_by_status": {
+    "PENDING": 2,
+    "VERIFIED": 0,
+    "DISMISSED": 0
+  }
+}

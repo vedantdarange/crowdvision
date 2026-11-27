@@ -1,0 +1,52 @@
+{
+  "detect_conf": 0.25,
+  "smoothing_window": 5,
+  "debounce_s": 3,
+  "clear_s": 8,
+  "hysteresis_ratio": 0.85,
+  "cooldown_s": 60,
+  "escalation_s": 60,
+  "stale_after_s": 10,
+  "reraise_after_s": 60,
+  "target_fps": 3,
+  "frame_width": 640,
+  "jpeg_quality": 0.7,
+  "default_warning_density": 3,
+  "default_critical_density": 4,
+  "help_info": {
+    "emergency_numbers": [
+      {
+        "label": "Unified emergency",
+        "number": "112"
+      },
+      {
+        "label": "Police",
+        "number": "100"
+      },
+      {
+        "label": "Ambulance",
+        "number": "102"
+      },
+      {
+        "label": "Fire",
+        "number": "101"
+      }
+    ],
+    "medical_points": [
+      {
+        "name": "First aid tent",
+        "lat": 18.52,
+        "lng": 73.8553,
+        "note": "Beside Stage Area"
+      }
+    ],
+    "exits": [
+      {
+        "name": "Exit Lane",
+        "lat": 18.520500000000002,
+        "lng": 73.8553,
+        "note": null
+      }
+    ]
+  }
+}

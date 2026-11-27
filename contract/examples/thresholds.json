@@ -1,0 +1,6 @@
+{
+  "warning_density": 3,
+  "critical_density": 4,
+  "warning_count": 3,
+  "critical_count": 5
+}

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "This role cannot perform this action."
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "status": "ok",
+  "db": "ok",
+  "detector": "ready",
+  "worker_alive": true,
+  "version": "0.0.0-mock"
+}

@@ -28,3 +28,17 @@ explicitly to 0. The tunnel deployment sets it to 1 in the demo `.env`.
 *Rationale:* Without this, `ProxyFix` would strip one hop from the IP chain, making `remote_addr`
 wrong. With `x_for=0`, ProxyFix is a no-op — safe for local dev.
 *Impact:* When demoing behind `cloudflared`, `TRUSTED_PROXY_COUNT=1` must be set in `.env`.
+
+---
+
+## 2026-11-27 — F0 mock expiry control
+
+Person B approved `POST /__mock/auth-expired` as a loopback-only mock control outside `/api/v1`. It expires mock access tokens and disconnects authenticated sockets after `auth:expired`; refresh tokens remain usable. This is not a production endpoint or a shared contract change. No additional client-to-server socket event was introduced.
+
+## 2026-11-27 — F0 dependency compatibility
+
+Person B approved shadcn supporting packages `tw-animate-css`, `next-themes`, and `@types/node`, `@types/react`, `@types/react-dom`, `@types/express`, `@types/cors`. The current Vite template selected TypeScript 7, while typescript-eslint 8.74 supports TypeScript below 6.1, so F0 uses TypeScript 6.0. The generated font and `cn` dependency were removed; system fonts and the plan-listed clsx/tailwind-merge are used. Requested React Hook Form components use shadcn's official new-york form registry because the current nova preset skipped that wrapper.
+
+## Pending clarification — display timezone
+
+Shared contract §1 specifies Asia/Kolkata display time; §14.5 says browser-local UI time. F0 only formats relative time, so it does not choose between these conflicting absolute-time rules. Clarify before adding absolute timestamp displays. Analytics remains explicitly bucketed in Asia/Kolkata as specified.

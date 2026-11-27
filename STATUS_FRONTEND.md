@@ -1,0 +1,40 @@
+# Frontend status — 27 November 2026
+
+## F0 implementation complete, pending human review
+
+The frontend contains the strict React/Vite scaffold, all 24 planned route placeholders, 17 shadcn components, shared status components, API/query utilities, contract 1.1.0 types and 43 JSON fixtures. The local Express and Socket.IO mock provides REST and realtime scenarios. Run instructions are in frontend/README.md.
+
+Person B requested a visual revision of F0. The public dashboard uses ivory surfaces, frosted cards, a schematic venue plan, a zone directory and visitor resources. Police and admin previews use an operations desk. Desktop navigation collapses into a labeled Lucide icon rail with a saved preference. Mobile users access navigation through tabs and the More drawer. The route tree and contract remain at F0. All venue readings displayed in the redesign come from the public demo fixture. The schematic is illustrative.
+
+## Verification
+
+The latest F0 visual revision fills the viewport and uses an ivory-to-peach background, copper accents and a charcoal feature card. The venue diagram uses matching neutral and clay tones. Browser measurements at desktop and mobile widths confirmed a zero origin and no horizontal overflow. Mobile screenshot capture was unavailable. After this change, `npm.cmd test` passed all 62 tests, `npm.cmd run lint` and `npm.cmd run format:check` passed, and `npm.cmd run build` passed its TypeScript check and production compilation.
+
+Ran from frontend on Windows:
+
+- `npm.cmd test` — 62 passed in 8 files, including the sidebar persistence regression, 24 route checks, axe checks, mock REST and socket behavior.
+- `npm.cmd run build` — passed, including `npm run typecheck` (`tsc --noEmit`) and Vite production bundling.
+- `npm.cmd run lint` and `npm.cmd run format:check` — passed.
+- `npm.cmd run check:fixtures` — all 43 passed. Running this concurrently with Vitest's fixture test initially failed because both used the same generated file. Run the commands sequentially.
+- `node scripts/report-contrast.mjs` — all eight badge text/background pairs passed. Light ratios for safe, warning, critical and no data were 4.79, 6.84, 5.91 and 6.92. Dark ratios were 6.49, 6.29, 5.28 and 6.97.
+- Local browser — visually checked the cream overview, toggled the desktop rail and opened the mobile drawer. Earlier F0 proxy smoke test (`node scripts/smoke.mjs`) passed for REST, WebSocket hello and deep links.
+
+## Limits and decisions
+
+Physical phones, real Flask/detector integration and push delivery remain untested. The scaffold uses mock data. UI guards and automatic token refresh remain scheduled for F1. The requested cream/glass art direction supersedes the original slate/no-glass styling. No additional libraries were needed for the redesign. F0 tooling approvals and the mock-only expiry control are recorded in docs/DECISIONS.md.
+
+## Next
+
+Person A and Person B review the contract and fixtures for M0. Clarify IST versus browser-local absolute display time before implementing timestamp displays. Await the next assigned phase.
+
+## F0 typography revision
+
+The dashboard now serves Bricolage Grotesque, Inter, Geist Mono and the JetBrains Mono fallback locally with font-display swap. The full-bleed frame and glass cards use 24px corners. Alert previews show the fixture's zone name and peak count beside its critical count threshold. Contract 1.1.0 and the F0 route scope still apply.
+
+From `frontend/`, `npm.cmd test` passed 63 tests in eight files, including grouped alert counts and missing thresholds. `npm.cmd run lint`, `npm.cmd run format:check` and `npm.cmd run build` passed. The build includes `npm run typecheck` (`tsc --noEmit`). `npm.cmd run check:fixtures` passed all 43 fixtures.
+
+In the browser, verified the rendered font families, sizes and weights on the overview and opened the police alert preview showing “Stage Area · 12 / 10”. The mobile browser check reported a 396px content width matching the viewport. A second Vite launch declined to start because the existing preview server was already running. Physical devices and the real backend were not tested.
+
+## Shared clone verification
+
+Phase F0 is done on `fe/f0-scaffold`. From `frontend/` with Node 24.18.0, `npm.cmd install` reported zero vulnerabilities. After extracting the types from the repository contract, `npm.cmd run check:fixtures` passed all 43 fixtures, `npm.cmd test` passed 63 tests in eight files with loopback access, and `npm.cmd run lint` and `npm.cmd run typecheck` both passed. M0 contract sign-off is pending human review.

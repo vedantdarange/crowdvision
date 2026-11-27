@@ -1,0 +1,11 @@
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Check the highlighted fields.",
+    "details": {
+      "name": [
+        "Name is required."
+      ]
+    }
+  }
+}
