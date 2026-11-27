@@ -1,4 +1,4 @@
-# Crowd Safety Monitor — F0
+# Crowd Safety Monitor — frontend
 
 Run from the `frontend/` directory in the repository. Node 24 LTS is supported. The lockfile pins the installed dependency set; use `npm ci` on another machine.
 
@@ -12,7 +12,7 @@ npm.cmd run dev
 
 Open [the local scaffold](http://localhost:5173). `npm.cmd` avoids this machine's PowerShell execution-policy restriction on `npm.ps1`; ordinary `npm` works in other shells. The mock binds to `127.0.0.1:5001`. Vite proxies `/api` and `/socket.io` to it when `VITE_USE_MOCKS=1`, otherwise to Flask on port 5000. No `.env` is committed.
 
-The UI is deliberately a scaffold: every planned route has a lazy placeholder. Preview workspace links expose public/police/admin navigation. Role guards and automatic 401 refresh are explicitly deferred to F1. REST authorization is enforced by the mock. Do not deploy the mock or treat preview navigation as access control.
+Login and registration use the selected API. Authenticated routes enforce the citizen, police and admin hierarchy. On reload the app restores tokens and fetches the current user from /auth/me. An expired access token is refreshed once per group of concurrent requests. Other feature routes remain scaffold previews. Use the mock locally for development.
 
 ## Verification
 

@@ -1,5 +1,16 @@
 # Frontend status — 27 November 2026
 
+## F1 — Authentication and route guards complete, pending human review
+
+Login, citizen registration, session restoration via /auth/me, single-flight refresh, role guards, role-aware navigation and logout are implemented on `fe/f1-auth`. Protected redirects preserve path, query and fragment. A failed refresh clears the session and query cache, returns to login and shows an expiry toast. Logout has an extension point for F5 push cleanup.
+
+- From frontend, `npm.cmd test` passed 92 tests in nine files. Three concurrent unauthorized requests shared one refresh on success and failure. The suite covers the four-audience guard matrix, navigation, form errors and axe on both forms.
+- `npm.cmd run check:fixtures` checked 43 fixtures. `npm.cmd run lint`, `npm.cmd run format:check`, and `npm.cmd run build` passed, including TypeScript. Vite warned about the 535.22 kB main chunk.
+- Headless Edge, 360 px, verified all four seed logins and logout on the mock and an isolated seeded copy of the merged Flask backend with VITE_USE_MOCKS=0. Admin landed on /admin/zones, both police users on /police and citizen on /. Anonymous /police preserved next; citizen /admin/zones showed Forbidden.
+- On the mock, browser checks also passed for citizen registration, allowed and disallowed next destinations, 404, silent refresh after mock expiry, and the toast and redirect after a simulated refresh rejection. Browser axe found zero violations on login and registration, including contrast. Physical devices and elapsed real-token expiry were not exercised.
+- During verification five guard assertions matched duplicate headings and TypeScript rejected a test query option. Selecting the level-one heading fixed both. One formatting failure was corrected. A second Vite instance needed its command-lock override. jsdom emitted canvas warnings; browser axe ran with the native canvas.
+- No contract or dependency changes. No F1 questions for Person A or B. Human M1 review is next. The absolute timestamp timezone question remains open for screens that display it.
+
 ## F0 implementation complete, pending human review
 
 The frontend contains the strict React/Vite scaffold, all 24 planned route placeholders, 17 shadcn components, shared status components, API/query utilities, contract 1.1.0 types and 43 JSON fixtures. The local Express and Socket.IO mock provides REST and realtime scenarios. Run instructions are in frontend/README.md.

@@ -1,8 +1,31 @@
 import type { ReactNode } from 'react';
 import type { Role } from '@contract/types';
-/** F0 scaffold only. F1 replaces this with authenticated session and role checks.
- * This is not an authorization boundary; the mock REST API enforces roles.
- */
-export function RequireRole({ children }: { role: Role; children: ReactNode }) {
-  return children;
+import { Navigate, useLocation } from 'react-router';
+import { useSession } from './session';
+import { allows, loginPath } from './access';
+import { AccessPage } from './AccessPage';
+export function RequireRole({
+  role,
+  children,
+}: {
+  role: Role;
+  children: ReactNode;
+}) {
+  const { user, tokens } = useSession();
+  const location = useLocation();
+  if (!user && tokens) return <p role="status">Checking your session…</p>;
+  if (!user)
+    return (
+      <Navigate
+        replace
+        to={loginPath(location.pathname + location.search + location.hash)}
+      />
+    );
+  return allows(user.role, role) ? (
+    children
+  ) : (
+    <main>
+      <AccessPage />
+    </main>
+  );
 }

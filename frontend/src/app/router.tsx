@@ -3,6 +3,7 @@ import { PublicLayout } from './layouts/PublicLayout';
 import { PoliceLayout } from './layouts/PoliceLayout';
 import { AdminLayout } from './layouts/AdminLayout';
 import { AuthLayout } from './layouts/AuthLayout';
+import { AccessPage } from '@/features/auth/AccessPage';
 import { RequireRole } from '@/features/auth';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -34,6 +35,11 @@ export const routes: RouteObject[] = [
       page('/help', 'Help', 'F2'),
       ...['/report/crowd', '/report/sos', '/my-reports'].map((path, i) => ({
         ...page(path, ['Crowd report', 'Send SOS', 'My reports'][i]!, 'F6'),
+        handle: {
+          role: 'citizen',
+          title: ['Crowd report', 'Send SOS', 'My reports'][i],
+          phase: 'F6',
+        },
         lazy: async () => {
           const m = await import('./pages/PlaceholderPage');
           return {
@@ -45,18 +51,33 @@ export const routes: RouteObject[] = [
           };
         },
       })),
-      page('/forbidden', 'Access unavailable', 'F1'),
-      page('*', 'Page not found', 'F1'),
+      { path: '/forbidden', element: <AccessPage /> },
+      { path: '*', element: <AccessPage missing /> },
     ],
   },
   {
     element: <AuthLayout />,
     children: [
-      page('/login', 'Sign in', 'F1'),
-      page('/register', 'Create citizen account', 'F1'),
+      {
+        path: '/login',
+        handle: { title: 'Sign in' },
+        HydrateFallback: RouteLoading,
+        lazy: async () => ({
+          Component: (await import('@/features/auth/AuthForm')).LoginForm,
+        }),
+      },
+      {
+        path: '/register',
+        handle: { title: 'Create citizen account' },
+        HydrateFallback: RouteLoading,
+        lazy: async () => ({
+          Component: (await import('@/features/auth/AuthForm')).RegisterForm,
+        }),
+      },
     ],
   },
   {
+    handle: { role: 'police' },
     element: (
       <RequireRole role="police">
         <PoliceLayout />
@@ -73,6 +94,7 @@ export const routes: RouteObject[] = [
     ],
   },
   {
+    handle: { role: 'admin' },
     element: (
       <RequireRole role="admin">
         <AdminLayout />
