@@ -1,71 +1,55 @@
 # Frontend status — 28 November 2026
 
-## F3a — Police dashboard, alert queue and alert detail
+## Phase: F4a — Camera and frame-streaming hooks, overlay (done)
 
-Police and admins can monitor live zones, filter and paginate alerts, open timelines, and acknowledge, respond or resolve with an optional note. The dashboard shows zone thresholds, trend, source availability and the age of the last live reading. Socket events update zone and alert caches and maintain up to 300 live samples per zone. Alert writes update visible lists immediately, roll back on failure and refetch after a conflict. The arming chip is a preview. Monitor, reports and zone live view retain their placeholder routes.
+## Done since last update
 
-**Verification.** From `frontend/`, `npm.cmd test` passed 110 of 110 tests in 11 files in 18.54 seconds. Coverage includes legal actions, cleared conditions awaiting review, feed and re-raise timeline labels, list membership, deduplication, the series cap, rollback on 409, access guards, keyboard operation and axe checks on both dashboard and queue. `npm.cmd run lint` and `npm.cmd run build` passed, including TypeScript. The build emitted its large-chunk warning. The jsdom axe checks exclude color contrast and use a map stub.
+Built and tested the browser camera/video pipeline hooks, overlay, HUD, and dev-only test harness under `frontend/src/features/monitor/` (and registered the dev-only route in `frontend/src/app/router.tsx`):
 
-**Browser checks.** On the mock ramp, filtered to Main Gate, acknowledged alert #100 with a note, verified its timeline, resolved it, and saw the dashboard count drop from two to one. A later ramp raised #121. At a 390 px viewport the queue displayed cards without horizontal overflow. B4b was already merged in PR #5 (89211f4). A second run used its Flask fake feed and a temporary seeded SQLite database. Police responded to and resolved Main Gate #1, saw the empty Active queue, and found the resolved record in All. The mock and Flask lifecycle checks recorded zero browser console errors. Physical devices and assistive-technology sessions were not tested.
-
-**Contract decision.** `GET /settings` stays admin-only. The admin resolve dialog uses the returned re-raise interval. The approved police fallback refers to “the delay configured in Settings.” This preserves contract 1.1.0. Absolute timestamps and date filters use browser-local time. F3a is ready for review.
-
-## F2 — Public screens and realtime complete on the mock
-
-The public map, zone detail, advisories and help routes use the public REST contract. A shared Socket.IO connection follows the session token, resyncs active queries on hello and displays a stale-data bar during disconnects. MapLibre loads on demand using the OpenFreeMap Liberty style. The map and list share a selection and the zone list stays accessible when the map fails.
-
-On fe/f2-public-map, npm.cmd test passed 98 tests in 10 files. Lint, all 43 fixtures, typecheck and the production build passed. The ZoneMap JS chunk was 310.93 kB gzip, separate from the entry and worker. Vite emitted its large-chunk warning. The Windows checkout caused 83 line-ending warnings from the default format check. Prettier passed with --end-of-line auto.
-
-Headless Edge at 360 px verified the mock ramp, polygon and list selection, stable map dimensions when the sheet opened, stale status after mock shutdown, REST resync after restart, and authenticated socket refresh. Browser axe found zero violations across all four routes. The final four-route browser pass recorded zero console errors. Testing caught and corrected a missing glyph font, advisory heading order, and map controls and polygons underneath the mobile sheet. Physical devices and the real Flask backend were outside this mock run.
-
-F2 is ready for human review. Contract 1.1.0 applies. The absolute display timezone question remains open for later work. The clean F2 branch was fast-forwarded to F1 before implementation.
-
-## F1 — Authentication and route guards complete, pending human review
-
-Login, citizen registration, session restoration via /auth/me, single-flight refresh, role guards, role-aware navigation and logout are implemented on `fe/f1-auth`. Protected redirects preserve path, query and fragment. A failed refresh clears the session and query cache, returns to login and shows an expiry toast. Logout has an extension point for F5 push cleanup.
-
-- From frontend, `npm.cmd test` passed 92 tests in nine files. Three concurrent unauthorized requests shared one refresh on success and failure. The suite covers the four-audience guard matrix, navigation, form errors and axe on both forms.
-- `npm.cmd run check:fixtures` checked 43 fixtures. `npm.cmd run lint`, `npm.cmd run format:check`, and `npm.cmd run build` passed, including TypeScript. Vite warned about the 535.22 kB main chunk.
-- Headless Edge, 360 px, verified all four seed logins and logout on the mock and an isolated seeded copy of the merged Flask backend with VITE_USE_MOCKS=0. Admin landed on /admin/zones, both police users on /police and citizen on /. Anonymous /police preserved next; citizen /admin/zones showed Forbidden.
-- On the mock, browser checks also passed for citizen registration, allowed and disallowed next destinations, 404, silent refresh after mock expiry, and the toast and redirect after a simulated refresh rejection. Browser axe found zero violations on login and registration, including contrast. Physical devices and elapsed real-token expiry were not exercised.
-- During verification five guard assertions matched duplicate headings and TypeScript rejected a test query option. Selecting the level-one heading fixed both. One formatting failure was corrected. A second Vite instance needed its command-lock override. jsdom emitted canvas warnings; browser axe ran with the native canvas.
-- No contract or dependency changes. No F1 questions for Person A or B. Human M1 review is next. The absolute timestamp timezone question remains open for screens that display it.
-
-## F0 implementation complete, pending human review
-
-The frontend contains the strict React/Vite scaffold, all 24 planned route placeholders, 17 shadcn components, shared status components, API/query utilities, contract 1.1.0 types and 43 JSON fixtures. The local Express and Socket.IO mock provides REST and realtime scenarios. Run instructions are in frontend/README.md.
-
-Person B requested a visual revision of F0. The public dashboard uses ivory surfaces, frosted cards, a schematic venue plan, a zone directory and visitor resources. Police and admin previews use an operations desk. Desktop navigation collapses into a labeled Lucide icon rail with a saved preference. Mobile users access navigation through tabs and the More drawer. The route tree and contract remain at F0. All venue readings displayed in the redesign come from the public demo fixture. The schematic is illustrative.
+1. **`useWebcam(facing)`** (`frontend/src/features/monitor/useWebcam.ts`): Calls `navigator.mediaDevices.getUserMedia({ video: { facingMode, width: { ideal: 1280 } }, audio: false })` feeding `<video autoPlay playsInline muted>`. Checks `!window.isSecureContext` ("Camera needs HTTPS (use the tunnel URL)") and missing `mediaDevices`, maps `NotAllowedError` / `NotFoundError` / `NotReadableError` (and aliases) to clear messages, stops every `MediaStreamTrack` on `stop()`, unmount, and superseded/late-resolving `getUserMedia` requests (idempotent under React `StrictMode`).
+2. **`useVideoFile()`** (`frontend/src/features/monitor/useVideoFile.ts`): Creates and revokes `URL.createObjectURL` on unload, replacement, and unmount; provides `play`, `pause`, `toggleLoop`, and `clearLoopRestart`; detects loop restarts when `currentTime` decreases on `timeupdate` and exposes `loopRestarted`.
+3. **`useFrameStreamer({ video, sourceId, enabled, ... })`** (`frontend/src/features/monitor/useFrameStreamer.ts`): Reads `GET /config` via TanStack Query (`target_fps`, `frame_width`, `jpeg_quality`) with optional override and defaults; waits for `loadedmetadata` before reading `videoWidth`/`videoHeight`; enforces strictly one frame in flight (including while `canvas.toBlob` and `blob.arrayBuffer()` are async); paces emissions to `>= 1000 / target_fps` ms; encodes frames to JPEG (`image/jpeg`, never PNG or WebP) at `frame_width` preserving aspect ratio; emits `frame:submit` with incrementing `seq` starting at 1 and `reset: true` on start or loop restart; clears in-flight on matching `(source_id, seq)` `frame:result` or 2 s timeout (counting a drop); stops without retrying and sets `state` to `'in-use'` on `SOURCE_IN_USE`; pauses webcam streams while `document.hidden` (while keeping video-file streams active); cleans up socket listeners, DOM listeners, and timers on unmount; exposes `{ state, fps, latencyMs: { p50, p95 }, drops, lastResult, lastResultAt, stop }`.
+4. **`overlay.ts` & `DetectionOverlay`** (`frontend/src/features/monitor/overlay.ts`, `frontend/src/features/monitor/DetectionOverlay.tsx`): Pure `computeContainRect` and `mapBoxes` helpers mapping normalised `[x1, y1, x2, y2, conf]` boxes into displayed pixel coordinates accounting for `object-fit: contain` letterboxing/pillarboxing and `devicePixelRatio`; `DetectionOverlay` draws thin boxes onto an absolutely positioned canvas, clears after 1 s without a new result, keeps confidence labels hidden by default with an accessible `aria-pressed` toggle button, and updates on container/window resize.
+5. **`MonitorHud`** (`frontend/src/features/monitor/MonitorHud.tsx`): Presentational stats panel displaying this source's raw `count`, clearly labelled zone-level values (`Zone smoothed`, `Zone density` via `DensityValue`, `Zone level` via `LevelBadge`), `FPS`, `Latency` (p50/p95), `Drops`, `NO_DATA` / "No data yet" when no result exists, and `DETECTOR_BUSY` as a quiet `bg-warning-bg text-warning` chip with `TriangleAlert` icon.
+6. **`MonitorDev`** (`frontend/src/features/monitor/MonitorDev.tsx`, route `/police/monitor-dev` behind `import.meta.env.DEV` in `frontend/src/app/router.tsx`): Dev-only harness excluded from production builds to exercise webcam, video file, overlay, and HUD against the mock server.
 
 ## Verification
 
-The latest F0 visual revision fills the viewport and uses an ivory-to-peach background, copper accents and a charcoal feature card. The venue diagram uses matching neutral and clay tones. Browser measurements at desktop and mobile widths confirmed a zero origin and no horizontal overflow. Mobile screenshot capture was unavailable. After this change, `npm.cmd test` passed all 62 tests, `npm.cmd run lint` and `npm.cmd run format:check` passed, and `npm.cmd run build` passed its TypeScript check and production compilation.
+From `frontend/` after the final edit to frontend source/tests:
 
-Ran from frontend on Windows:
+- `npm.cmd test` (`vitest run`) — **139 passed in 12 files** (including 29 tests in `tests/monitor.test.tsx`). Covers `computeContainRect`/`mapBoxes` (including letterboxed 16:9 in 4:3 at `dpr = 2`), `useFrameStreamer` (1 frame in flight incl. deferred `toBlob`, matching `frame:result`, 2 s timeout drop, strict `target_fps` pacing, `seq` increment, `reset` on start & loop restart, `loadedmetadata` wait, `/config` query read, `SOURCE_IN_USE` stop with no retry, `document.hidden` webcam pause vs video-file continue, cleanup, JPEG mime type + quality), `useWebcam` (`!isSecureContext`, error mappings, `StrictMode` track stop, late-resolving unmount track release), `useVideoFile` (URL revocation on unload & unmount, loop-restart `currentTime` decrease), `MonitorHud` (`NO_DATA`, zone metrics, `DETECTOR_BUSY` chip, `vitest-axe` zero non-contrast violations), and `DetectionOverlay` (confidence toggle and 1 s stale clear).
+- `npm.cmd run lint` — passed (0 errors, 0 warnings).
+- `npm.cmd run format:check` — passed (Prettier clean).
+- `npm.cmd run build` (`tsc --noEmit && vite build`) — passed; `MonitorDev` excluded from production bundle. Pre-existing Vite >500 kB chunk warning on `ZoneMap`/`index` unchanged.
+- **Live browser check (headless Edge + Playwright) against `npm.cmd run mock` + `npm.cmd run dev` on `/police/monitor-dev`:**
+  - Logged in as `police1@demo.local`; loaded a recorded looping 640×360 WebM video file and streamed to the mock server (`VITE_USE_MOCKS=1`): observed live HUD updates (`Source count 5`, `Zone smoothed 4.5`, `Zone density 0.2 people/m²`, `Zone level Warning`, `FPS 2.9`, `Latency p50: 4 ms · p95: 6 ms`, `Drops 0`), `Overlay canvas` (`640×360`, 7006 non-zero drawn pixels), `max_in_flight: 1` across 16 WebSocket frames, confidence toggle (`Show conf` -> `Hide conf`), and zero horizontal overflow at `360px` width.
+  - Switched to Webcam mode (`--use-fake-device-for-media-stream`): observed `hasSrcObj: true`, live `frame:result` updates in HUD (`Source count 3`, `Drops 0`), and verified `Reset` ended all `MediaStreamTrack`s (`['ended']`).
+  - Zero browser console errors and zero page errors.
 
-- `npm.cmd test` — 62 passed in 8 files, including the sidebar persistence regression, 24 route checks, axe checks, mock REST and socket behavior.
-- `npm.cmd run build` — passed, including `npm run typecheck` (`tsc --noEmit`) and Vite production bundling.
-- `npm.cmd run lint` and `npm.cmd run format:check` — passed.
-- `npm.cmd run check:fixtures` — all 43 passed. Running this concurrently with Vitest's fixture test initially failed because both used the same generated file. Run the commands sequentially.
-- `node scripts/report-contrast.mjs` — all eight badge text/background pairs passed. Light ratios for safe, warning, critical and no data were 4.79, 6.84, 5.91 and 6.92. Dark ratios were 6.49, 6.29, 5.28 and 6.97.
-- Local browser — visually checked the cream overview, toggled the desktop rail and opened the mobile drawer. Earlier F0 proxy smoke test (`node scripts/smoke.mjs`) passed for REST, WebSocket hello and deep links.
+## Blocked / questions for Person B
 
-## Limits and decisions
+- None blocking F4a. Ready for F4b (`SourcePicker`, `/police/monitor`, `/police/zones/:id` live chart) when assigned.
 
-Physical phones, real Flask/detector integration and push delivery remain untested. The scaffold uses mock data. UI guards and automatic token refresh remain scheduled for F1. The requested cream/glass art direction supersedes the original slate/no-glass styling. No additional libraries were needed for the redesign. F0 tooling approvals and the mock-only expiry control are recorded in docs/DECISIONS.md.
+## Requests for AI-A (backend)
 
-## Next
+- None.
 
-Person A and Person B review the contract and fixtures for M0. Clarify IST versus browser-local absolute display time before implementing timestamp displays. Await the next assigned phase.
+## Using: mock server (`VITE_USE_MOCKS=1`)
 
-## F0 typography revision
+All F4a hooks and browser checks ran against the local mock server (`frontend/mock-server/server.ts`).
 
-The dashboard now serves Bricolage Grotesque, Inter, Geist Mono and the JetBrains Mono fallback locally with font-display swap. The full-bleed frame and glass cards use 24px corners. Alert previews show the fixture's zone name and peak count beside its critical count threshold. Contract 1.1.0 and the F0 route scope still apply.
+## Untested / known issues
 
-From `frontend/`, `npm.cmd test` passed 63 tests in eight files, including grouped alert counts and missing thresholds. `npm.cmd run lint`, `npm.cmd run format:check` and `npm.cmd run build` passed. The build includes `npm run typecheck` (`tsc --noEmit`). `npm.cmd run check:fixtures` passed all 43 fixtures.
+- Physical webcam hardware LED behaviour, mobile browsers (Android Chrome / iOS Safari), and physical insecure HTTP LAN tunnel access were not tested in this environment (verified via fake media stream and mocked `window.isSecureContext`).
+- Live integration against the real Flask + YOLOv8n (`be/b5b`) backend detector worker was not run in F4a (scheduled after/alongside F4b).
+- `vitest-axe` in `MonitorHud` ran in jsdom with `color-contrast` disabled (jsdom limitation; theme tokens in `index.css` were previously verified by `contrast.test.ts`).
 
-In the browser, verified the rendered font families, sizes and weights on the overview and opened the police alert preview showing “Stage Area · 12 / 10”. The mobile browser check reported a 396px content width matching the viewport. A second Vite launch declined to start because the existing preview server was already running. Physical devices and the real backend were not tested.
+## Next 3 steps
 
-## Shared clone verification
+1. Await F4b assignment (`SourcePicker`, `/police/monitor` production page, `/police/zones/:id` live view + Recharts chart, rolling series store integration).
+2. Run joint M4 integration check against real Flask backend (`DETECTOR_BACKEND=ultralytics`, `VITE_USE_MOCKS=0`) with webcam and crowd video.
+3. Proceed to F5 (PWA & Web Push) after F4 review.
 
-Phase F0 is done on `fe/f0-scaffold`. From `frontend/` with Node 24.18.0, `npm.cmd install` reported zero vulnerabilities. After extracting the types from the repository contract, `npm.cmd run check:fixtures` passed all 43 fixtures, `npm.cmd test` passed 63 tests in eight files with loopback access, and `npm.cmd run lint` and `npm.cmd run typecheck` both passed. M0 contract sign-off is pending human review.
+## Lighthouse / axe results once available
+
+- `vitest-axe` on `MonitorHud` passed with 0 violations (`color-contrast` excluded in jsdom). Lighthouse not run for F4a (dev-only harness).
