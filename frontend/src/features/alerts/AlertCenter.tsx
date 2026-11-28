@@ -40,7 +40,7 @@ export function AlertBanner({
             Acknowledge
           </button>
           <Link
-            className="inline-flex min-h-11 items-center underline"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center px-1.5 underline"
             to={'/police/alerts/' + entry.alert.id}
           >
             Open
@@ -51,7 +51,7 @@ export function AlertBanner({
           <strong>SOS - {label(entry.report.sos_type!)}</strong>
           <span>{entry.report.zone_name ?? 'location outside zones'}</span>
           <Link
-            className="inline-flex min-h-11 items-center underline"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center px-1.5 underline"
             to={'/police/reports?focus=' + entry.report.id}
           >
             Open
@@ -178,7 +178,11 @@ export function AlertCenter() {
       {feed.failed && (
         <p>
           Could not sync alert banners.{' '}
-          <button className="underline" onClick={feed.retry}>
+          <button
+            type="button"
+            className="min-h-11 min-w-11 px-2 underline"
+            onClick={feed.retry}
+          >
             Retry
           </button>
         </p>

@@ -7,9 +7,14 @@ import { useSession } from '@/features/auth';
 import { refreshSession } from '@/lib/apiClient';
 import { useConfig } from '@/features/zones/api';
 import { updateZone, updateAdvisory } from './cache';
-export const useConnection = create<{ status: 'connected' | 'reconnecting' }>(
-  () => ({ status: 'reconnecting' }),
-);
+export const useConnection = create<{
+  status: 'connected' | 'reconnecting' | 'offline';
+}>(() => ({
+  status:
+    typeof navigator !== 'undefined' && navigator.onLine === false
+      ? 'offline'
+      : 'reconnecting',
+}));
 import {
   updateAlert,
   updatePoliceZone,
@@ -26,8 +31,24 @@ function start() {
     void queryClient.invalidateQueries({ type: 'active' });
   });
   socket.on('disconnect', () =>
-    useConnection.setState({ status: 'reconnecting' }),
+    useConnection.setState({
+      status:
+        typeof navigator !== 'undefined' && navigator.onLine === false
+          ? 'offline'
+          : 'reconnecting',
+    }),
   );
+  if (typeof window !== 'undefined') {
+    window.addEventListener('offline', () => {
+      useConnection.setState({ status: 'offline' });
+    });
+    window.addEventListener('online', () => {
+      useConnection.setState({ status: 'reconnecting' });
+      socket.disconnect();
+      socket.auth = { token: useSession.getState().tokens?.access_token };
+      socket.connect();
+    });
+  }
   socket.on('zone:update', (zone) => updateZone(queryClient, zone));
   const citizen = () =>
     !useSession.getState().user ||
@@ -98,12 +119,14 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   const status = useConnection((s) => s.status);
   return (
     <>
-      {status === 'reconnecting' && (
+      {status !== 'connected' && (
         <div
           role="status"
           className="sticky top-0 z-40 bg-amber-100 p-2 text-center text-amber-950"
         >
-          Reconnecting... live data may be stale
+          {status === 'offline'
+            ? 'Offline — live data may be stale'
+            : 'Reconnecting... live data may be stale'}
         </div>
       )}
       {children}

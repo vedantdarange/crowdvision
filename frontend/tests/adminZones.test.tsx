@@ -341,14 +341,15 @@ describe('AdminZonesPage (/admin/zones)', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText('Main Gate')).toBeVisible();
+    const table = await screen.findByRole('table');
+    expect(within(table).getByText('Main Gate')).toBeVisible();
     expect(screen.getByRole('link', { name: /New zone/i })).toHaveAttribute(
       'href',
       '/admin/zones/new',
     );
     expect((await axe(container)).violations).toEqual([]);
 
-    const mainGateRow = screen.getByText('Main Gate').closest('tr')!;
+    const mainGateRow = within(table).getByText('Main Gate').closest('tr')!;
     await userEvent.click(
       within(mainGateRow).getByRole('button', { name: /Deactivate/i }),
     );
@@ -752,11 +753,17 @@ describe('AdminSourcesPage (/admin/sources)', () => {
     await userEvent.type(covInput, '25.5');
     await userEvent.click(screen.getByRole('button', { name: /Add source/i }));
 
-    expect(await screen.findByText('East Tripod Cam')).toBeVisible();
+    const zone1Section = screen.getByLabelText(/Sources in Main Gate/i);
+    const zone1Table = within(zone1Section).getByRole('table');
+    expect(
+      await within(zone1Table).findByText('East Tripod Cam'),
+    ).toBeVisible();
     expect(createdBody?.coverage_area_m2).toBe(25.5);
 
     // Edit newly created source -> PATCH
-    const newRow = screen.getByText('East Tripod Cam').closest('tr')!;
+    const newRow = within(zone1Table)
+      .getByText('East Tripod Cam')
+      .closest('tr')!;
     await userEvent.click(
       within(newRow).getByRole('button', { name: /Edit/i }),
     );
@@ -769,11 +776,13 @@ describe('AdminSourcesPage (/admin/sources)', () => {
       screen.getByRole('button', { name: /Save changes/i }),
     );
     await waitFor(() => {
-      expect(screen.getByText('30.0 m²')).toBeVisible();
+      expect(within(zone1Table).getByText('30.0 m²')).toBeVisible();
     });
 
     // Disable -> confirm dialog -> DELETE
-    const updatedRow = screen.getByText('East Tripod Cam').closest('tr')!;
+    const updatedRow = within(zone1Table)
+      .getByText('East Tripod Cam')
+      .closest('tr')!;
     await userEvent.click(
       within(updatedRow).getByRole('button', { name: /Disable/i }),
     );
@@ -781,7 +790,7 @@ describe('AdminSourcesPage (/admin/sources)', () => {
       screen.getByRole('button', { name: /Confirm disable/i }),
     );
     await waitFor(() => {
-      expect(screen.queryByText('East Tripod Cam')).toBeNull();
+      expect(within(zone1Table).queryByText('East Tripod Cam')).toBeNull();
     });
   });
 });

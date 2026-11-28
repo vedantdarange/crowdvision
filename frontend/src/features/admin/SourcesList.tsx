@@ -617,101 +617,176 @@ function SourcesContent({
                 No camera sources configured for this zone yet.
               </p>
             ) : (
-              <div className="queue-table">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Kind</TableHead>
-                      <TableHead>Coverage area</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {zoneSources.map((src) => (
-                      <TableRow key={src.id}>
-                        <TableCell className="font-semibold">
-                          {src.name}
-                        </TableCell>
-                        <TableCell>
-                          <span className="inline-flex items-center gap-1.5">
-                            {src.kind === 'WEBCAM' ? (
-                              <Camera size={14} aria-hidden />
-                            ) : (
-                              <Video size={14} aria-hidden />
-                            )}
-                            <span>
-                              {src.kind === 'WEBCAM' ? 'Webcam' : 'Video file'}
+              <>
+                <div className="queue-table">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Kind</TableHead>
+                        <TableHead>Coverage area</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {zoneSources.map((src) => (
+                        <TableRow key={src.id}>
+                          <TableCell className="font-semibold">
+                            {src.name}
+                          </TableCell>
+                          <TableCell>
+                            <span className="inline-flex items-center gap-1.5">
+                              {src.kind === 'WEBCAM' ? (
+                                <Camera size={14} aria-hidden />
+                              ) : (
+                                <Video size={14} aria-hidden />
+                              )}
+                              <span>
+                                {src.kind === 'WEBCAM'
+                                  ? 'Webcam'
+                                  : 'Video file'}
+                              </span>
                             </span>
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          {src.coverage_area_m2.toFixed(1)} m²
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-wrap items-center gap-2">
-                            {src.status === 'ONLINE' ? (
-                              <span className="bg-safe-bg text-safe border-safe/30 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold">
-                                <Radio size={12} aria-hidden />
-                                Online
-                              </span>
-                            ) : (
-                              <span className="bg-muted text-muted-foreground inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold">
-                                <WifiOff size={12} aria-hidden />
-                                Offline
-                              </span>
-                            )}
-                            {!src.is_active && (
-                              <span className="rounded border px-1.5 py-0.5 text-xs">
-                                Disabled
-                              </span>
-                            )}
-                            {src.last_frame_at && (
-                              <Age ts={src.last_frame_at} />
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="police-actions justify-end">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="min-h-11 gap-1.5"
-                              onClick={(event) =>
-                                setEditTarget({
-                                  source: src,
-                                  zoneAreaM2: zone.area_m2,
-                                  trigger: event.currentTarget,
-                                })
-                              }
-                            >
-                              <Pencil size={15} aria-hidden />
-                              Edit
-                            </Button>
-                            {src.is_active && (
+                          </TableCell>
+                          <TableCell>
+                            {src.coverage_area_m2.toFixed(1)} m²
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {src.status === 'ONLINE' ? (
+                                <span className="bg-safe-bg text-safe border-safe/30 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold">
+                                  <Radio size={12} aria-hidden />
+                                  Online
+                                </span>
+                              ) : (
+                                <span className="bg-muted text-muted-foreground inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold">
+                                  <WifiOff size={12} aria-hidden />
+                                  Offline
+                                </span>
+                              )}
+                              {!src.is_active && (
+                                <span className="rounded border px-1.5 py-0.5 text-xs">
+                                  Disabled
+                                </span>
+                              )}
+                              {src.last_frame_at && (
+                                <Age ts={src.last_frame_at} />
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="police-actions justify-end">
                               <Button
                                 type="button"
                                 variant="outline"
                                 className="min-h-11 gap-1.5"
                                 onClick={(event) =>
-                                  setDisableTarget({
+                                  setEditTarget({
                                     source: src,
+                                    zoneAreaM2: zone.area_m2,
                                     trigger: event.currentTarget,
                                   })
                                 }
                               >
-                                <PowerOff size={15} aria-hidden />
-                                Disable
+                                <Pencil size={15} aria-hidden />
+                                Edit
                               </Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                              {src.is_active && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="min-h-11 gap-1.5"
+                                  onClick={(event) =>
+                                    setDisableTarget({
+                                      source: src,
+                                      trigger: event.currentTarget,
+                                    })
+                                  }
+                                >
+                                  <PowerOff size={15} aria-hidden />
+                                  Disable
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                <div className="queue-cards">
+                  {zoneSources.map((src) => (
+                    <article key={src.id} className="alert-card">
+                      <div className="flex w-full flex-wrap items-center justify-between gap-2">
+                        <strong>{src.name}</strong>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {src.status === 'ONLINE' ? (
+                            <span className="bg-safe-bg text-safe border-safe/30 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold">
+                              <Radio size={12} aria-hidden />
+                              Online
+                            </span>
+                          ) : (
+                            <span className="bg-muted text-muted-foreground inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold">
+                              <WifiOff size={12} aria-hidden />
+                              Offline
+                            </span>
+                          )}
+                          {!src.is_active && (
+                            <span className="rounded border px-1.5 py-0.5 text-xs">
+                              Disabled
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <p className="w-full text-sm">
+                        {src.kind === 'WEBCAM' ? 'Webcam' : 'Video file'} ·
+                        Coverage {src.coverage_area_m2.toFixed(1)} m²
+                        {src.last_frame_at && (
+                          <>
+                            {' · '}
+                            <Age ts={src.last_frame_at} />
+                          </>
+                        )}
+                      </p>
+                      <div className="police-actions w-full">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-11 gap-1.5"
+                          onClick={(event) =>
+                            setEditTarget({
+                              source: src,
+                              zoneAreaM2: zone.area_m2,
+                              trigger: event.currentTarget,
+                            })
+                          }
+                        >
+                          <Pencil size={15} aria-hidden />
+                          Edit
+                        </Button>
+                        {src.is_active && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="min-h-11 gap-1.5"
+                            onClick={(event) =>
+                              setDisableTarget({
+                                source: src,
+                                trigger: event.currentTarget,
+                              })
+                            }
+                          >
+                            <PowerOff size={15} aria-hidden />
+                            Disable
+                          </Button>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </>
             )}
           </section>
         );

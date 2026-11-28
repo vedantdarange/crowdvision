@@ -78,6 +78,25 @@ function DetectionOverlayBase({
     }
   }, [videoRef, lastResult, showConf]);
 
+  const drawBoxesRef = useRef(drawBoxes);
+  drawBoxesRef.current = drawBoxes;
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onResize = () => drawBoxesRef.current();
+    const observer =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(onResize)
+        : null;
+    observer?.observe(video);
+    window.addEventListener('resize', onResize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', onResize);
+    };
+  }, [videoRef]);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) {
@@ -99,17 +118,8 @@ function DetectionOverlayBase({
     drawBoxes();
 
     const timer = setTimeout(clearCanvas, remaining);
-    const observer =
-      typeof ResizeObserver !== 'undefined'
-        ? new ResizeObserver(() => drawBoxes())
-        : null;
-    observer?.observe(video);
-    window.addEventListener('resize', drawBoxes);
-
     return () => {
       clearTimeout(timer);
-      observer?.disconnect();
-      window.removeEventListener('resize', drawBoxes);
     };
   }, [videoRef, lastResult, resultTimestamp, drawBoxes, clearCanvas]);
 
@@ -124,7 +134,7 @@ function DetectionOverlayBase({
         type="button"
         aria-pressed={showConf}
         onClick={() => setShowConf((v) => !v)}
-        className="absolute right-2 top-2 z-10 rounded bg-black/70 px-2.5 py-1 text-xs font-medium text-white hover:bg-black/85"
+        className="absolute right-2 top-2 z-10 min-h-11 min-w-11 rounded bg-black/70 px-3 py-1 text-xs font-medium text-white hover:bg-black/85"
       >
         {showConf ? 'Hide conf' : 'Show conf'}
       </button>

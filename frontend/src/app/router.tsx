@@ -16,12 +16,13 @@ function RouteLoading() {
   );
 }
 
-function page(path: string, title: string, phase: string): RouteObject {
+function page(
+  title: string,
+  phase: string,
+): Pick<RouteObject, 'handle' | 'HydrateFallback'> {
   return {
-    path,
     handle: { title, phase },
     HydrateFallback: RouteLoading,
-    lazy: () => import('./pages/PlaceholderPage'),
   };
 }
 export const routes: RouteObject[] = [
@@ -29,31 +30,36 @@ export const routes: RouteObject[] = [
     element: <PublicLayout />,
     children: [
       {
-        ...page('/', 'Live map', 'F2'),
+        path: '/',
+        ...page('Live map', 'F2'),
         lazy: async () => ({
           Component: (await import('@/features/zones/PublicPages')).LiveMap,
         }),
       },
       {
-        ...page('/zones/:id', 'Zone detail', 'F2'),
+        path: '/zones/:id',
+        ...page('Zone detail', 'F2'),
         lazy: async () => ({
           Component: (await import('@/features/zones/PublicPages')).ZoneDetail,
         }),
       },
       {
-        ...page('/advisories', 'Advisories', 'F2'),
+        path: '/advisories',
+        ...page('Advisories', 'F2'),
         lazy: async () => ({
           Component: (await import('@/features/zones/PublicPages')).Advisories,
         }),
       },
       {
-        ...page('/help', 'Help', 'F2'),
+        path: '/help',
+        ...page('Help', 'F2'),
         lazy: async () => ({
           Component: (await import('@/features/zones/PublicPages')).Help,
         }),
       },
       {
-        ...page('/report/crowd', 'Crowd report', 'F6'),
+        path: '/report/crowd',
+        ...page('Crowd report', 'F6'),
         handle: { role: 'citizen', title: 'Crowd report', phase: 'F6' },
         lazy: async () => {
           const { CrowdReportPage } = await import('@/features/reports');
@@ -67,7 +73,8 @@ export const routes: RouteObject[] = [
         },
       },
       {
-        ...page('/report/sos', 'Send SOS', 'F6'),
+        path: '/report/sos',
+        ...page('Send SOS', 'F6'),
         handle: { role: 'citizen', title: 'Send SOS', phase: 'F6' },
         lazy: async () => {
           const { SosReportPage } = await import('@/features/reports');
@@ -81,7 +88,8 @@ export const routes: RouteObject[] = [
         },
       },
       {
-        ...page('/my-reports', 'My reports', 'F6'),
+        path: '/my-reports',
+        ...page('My reports', 'F6'),
         handle: { role: 'citizen', title: 'My reports', phase: 'F6' },
         lazy: async () => {
           const { MyReportsPage } = await import('@/features/reports');
@@ -124,32 +132,37 @@ export const routes: RouteObject[] = [
     element: <PoliceLayout />,
     children: [
       {
-        ...page('/police', 'Operations dashboard', 'F3'),
+        path: '/police',
+        ...page('Operations dashboard', 'F3'),
         lazy: async () => ({
           Component: (await import('@/features/police/Dashboard')).Dashboard,
         }),
       },
       {
-        ...page('/police/alerts', 'Alert queue', 'F3'),
+        path: '/police/alerts',
+        ...page('Alert queue', 'F3'),
         lazy: async () => ({
           Component: (await import('@/features/police/Queue')).Queue,
         }),
       },
       {
-        ...page('/police/alerts/:id', 'Alert detail', 'F3'),
+        path: '/police/alerts/:id',
+        ...page('Alert detail', 'F3'),
         lazy: async () => ({
           Component: (await import('@/features/police/Detail')).Detail,
         }),
       },
       {
-        ...page('/police/zones/:id', 'Zone live view', 'F4'),
+        path: '/police/zones/:id',
+        ...page('Zone live view', 'F4'),
         lazy: async () => ({
           Component: (await import('@/features/zones/PoliceZoneDetail'))
             .PoliceZoneDetail,
         }),
       },
       {
-        ...page('/police/monitor', 'Camera control', 'F4'),
+        path: '/police/monitor',
+        ...page('Camera control', 'F4'),
         lazy: async () => ({
           Component: (await import('@/features/monitor/MonitorPage'))
             .MonitorPage,
@@ -169,13 +182,15 @@ export const routes: RouteObject[] = [
           ]
         : []),
       {
-        ...page('/police/reports', 'Report review', 'F6'),
+        path: '/police/reports',
+        ...page('Report review', 'F6'),
         lazy: async () => ({
           Component: (await import('@/features/reports')).ReportReviewPage,
         }),
       },
       {
-        ...page('/police/advisories', 'Broadcast advisory', 'F6'),
+        path: '/police/advisories',
+        ...page('Broadcast advisory', 'F6'),
         lazy: async () => ({
           Component: (await import('@/features/advisories'))
             .PoliceAdvisoriesPage,
@@ -185,45 +200,53 @@ export const routes: RouteObject[] = [
         handle: { role: 'admin' },
         children: [
           {
-            ...page('/admin/zones', 'Zones', 'F7'),
+            path: '/admin/zones',
+            ...page('Zones', 'F7'),
             lazy: async () => ({
               Component: (await import('@/features/admin')).AdminZonesPage,
             }),
           },
           {
-            ...page('/admin/zones/new', 'New zone', 'F7'),
+            path: '/admin/zones/new',
+            ...page('New zone', 'F7'),
             lazy: async () => ({
               Component: (await import('@/features/admin/ZoneEditor'))
                 .ZoneEditorPage,
             }),
           },
           {
-            ...page('/admin/zones/:id/edit', 'Edit zone', 'F7'),
+            path: '/admin/zones/:id/edit',
+            ...page('Edit zone', 'F7'),
             lazy: async () => ({
               Component: (await import('@/features/admin/ZoneEditor'))
                 .ZoneEditorPage,
             }),
           },
           {
-            ...page('/admin/sources', 'Sources', 'F7'),
+            path: '/admin/sources',
+            ...page('Sources', 'F7'),
             lazy: async () => ({
               Component: (await import('@/features/admin')).AdminSourcesPage,
             }),
           },
           {
-            ...page('/admin/users', 'Users', 'F7'),
+            path: '/admin/users',
+            ...page('Users', 'F7'),
             lazy: () => import('@/features/admin/Users'),
           },
           {
-            ...page('/admin/settings', 'Settings', 'F7'),
+            path: '/admin/settings',
+            ...page('Settings', 'F7'),
             lazy: () => import('@/features/admin/Settings'),
           },
           {
-            ...page('/admin/analytics', 'Analytics', 'F7'),
+            path: '/admin/analytics',
+            ...page('Analytics', 'F7'),
             lazy: () => import('@/features/admin/Analytics'),
           },
           {
-            ...page('/admin/audit', 'Audit log', 'F7'),
+            path: '/admin/audit',
+            ...page('Audit log', 'F7'),
             lazy: () => import('@/features/admin/Audit'),
           },
         ],

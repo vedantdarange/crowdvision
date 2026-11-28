@@ -134,3 +134,7 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+.police-page .maplibregl-ctrl-group button {
+  min-width: 44px;
+  min-height: 44px;
+}

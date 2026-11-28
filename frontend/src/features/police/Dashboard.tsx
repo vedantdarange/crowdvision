@@ -35,7 +35,10 @@ export function Dashboard() {
           <ul>
             {feed.data.map((a) => (
               <li key={a.id}>
-                <Link to={'/police/alerts/' + a.id}>
+                <Link
+                  className="inline-flex min-h-11 items-center"
+                  to={'/police/alerts/' + a.id}
+                >
                   {a.zone_name} · #{a.id}
                 </Link>
                 <LevelBadge level={a.level} />
@@ -44,7 +47,12 @@ export function Dashboard() {
               </li>
             ))}
           </ul>
-          <Link to="/police/alerts">Open alert queue</Link>
+          <Link
+            className="inline-flex min-h-11 items-center"
+            to="/police/alerts"
+          >
+            Open alert queue
+          </Link>
         </section>
       </div>
       <h2>Zones</h2>
@@ -55,7 +63,12 @@ export function Dashboard() {
           return (
             <article key={z.id} className="glass">
               <h3>
-                <Link to={'/police/zones/' + z.id}>{z.name}</Link>
+                <Link
+                  className="inline-flex min-h-11 items-center"
+                  to={'/police/zones/' + z.id}
+                >
+                  {z.name}
+                </Link>
               </h3>
               <div className="police-actions">
                 <LevelBadge level={z.level} />
@@ -79,7 +92,12 @@ export function Dashboard() {
                 {z.live_updated_at && 'Updated '}
                 <Age ts={z.live_updated_at} />
               </small>
-              <Link to={'/police/zones/' + z.id}>View live chart</Link>
+              <Link
+                className="inline-flex min-h-11 items-center"
+                to={'/police/zones/' + z.id}
+              >
+                View live chart
+              </Link>
             </article>
           );
         })}

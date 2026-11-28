@@ -154,7 +154,7 @@ function AuthForm({ creating = false }: { creating?: boolean }) {
         </Button>
       </form>
       <Link
-        className="mt-4 inline-block underline"
+        className="mt-2 inline-flex min-h-11 items-center underline"
         to={{
           pathname: creating ? '/login' : '/register',
           search: params.toString(),

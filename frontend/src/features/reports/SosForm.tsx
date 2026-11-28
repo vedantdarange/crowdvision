@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { CheckCircle2, Loader2, PhoneCall, Siren } from 'lucide-react';
 import type { Report, SosType } from '@contract/types';
@@ -46,6 +46,7 @@ export function SosReportPage() {
   const [note, setNote] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitted, setSubmitted] = useState<Report | null>(null);
+  const sendButtonRef = useRef<HTMLButtonElement | null>(null);
 
   async function handleConfirmedSend() {
     if (!selectedType || !geo.coords || submitMutation.isPending) return;
@@ -200,6 +201,7 @@ export function SosReportPage() {
 
           <div className="flex flex-wrap items-center gap-3">
             <Button
+              ref={sendButtonRef}
               type="button"
               className="min-h-12 gap-2 px-5"
               disabled={
@@ -229,7 +231,16 @@ export function SosReportPage() {
           if (!open && !submitMutation.isPending) setConfirmOpen(false);
         }}
       >
-        <DialogContent>
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const target = sendButtonRef.current;
+            (target?.isConnected
+              ? target
+              : document.getElementById('main')
+            )?.focus();
+          }}
+        >
           <DialogTitle>Confirm SOS request</DialogTitle>
           <DialogDescription>
             Send a{' '}

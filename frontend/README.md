@@ -1,33 +1,69 @@
 # Crowd Safety Monitor — frontend
 
-Run from the `frontend/` directory in the repository. Node 24 LTS is supported. The lockfile pins the installed dependency set; use `npm ci` on another machine.
+Run all commands from the `frontend/` directory. **Node 24 LTS** (or `>=24.0.0`) is required. The lockfile pins the installed dependency set; use `npm ci` on another machine.
+
+## Install & Configure
 
 ```powershell
 npm.cmd ci
 Copy-Item .env.example .env
+```
+
+(`npm.cmd` avoids PowerShell execution-policy blocks on `npm.ps1`; standard `npm` works in bash/zsh/cmd.) No `.env` file is committed.
+
+## Run in Mock Mode
+
+Start the Express + Socket.IO fixture mock server (`127.0.0.1:5001`) and the Vite dev server (`localhost:5173`):
+
+```powershell
+# Terminal 1 (mock server):
 npm.cmd run mock
-# In a second terminal, from frontend:
+
+# Terminal 2 (Vite dev server with VITE_USE_MOCKS=1 in .env):
 npm.cmd run dev
 ```
 
-Open [the local scaffold](http://localhost:5173). `npm.cmd` avoids this machine's PowerShell execution-policy restriction on `npm.ps1`; ordinary `npm` works in other shells. The mock binds to `127.0.0.1:5001`. Vite proxies `/api` and `/socket.io` to it when `VITE_USE_MOCKS=1`, otherwise to Flask on port 5000. No `.env` is committed.
+Open [http://localhost:5173](http://localhost:5173). When `VITE_USE_MOCKS=1`, Vite proxies `/api` and `/socket.io` to `http://127.0.0.1:5001`.
 
-Login and registration use the selected API. Authenticated routes enforce the citizen, police and admin hierarchy. On reload the app restores tokens and fetches the current user from /auth/me. An expired access token is refreshed once per group of concurrent requests. Other feature routes remain scaffold previews. Use the mock locally for development.
+## Run Against the Real Backend
 
-## Verification
+With Flask + Socket.IO running on `http://127.0.0.1:5000`:
+
+```powershell
+# Set VITE_USE_MOCKS=0 in frontend/.env (or pass it on the command line):
+$env:VITE_USE_MOCKS = "0"
+npm.cmd run dev
+```
+
+Or build the static production bundle so Flask serves `frontend/dist` directly (demo / tunnel mode):
+
+```powershell
+$env:VITE_USE_MOCKS = "0"
+npm.cmd run build
+```
+
+See [docs/DEMO.md](../docs/DEMO.md) for the full Flask + `cloudflared` demo runbook.
+
+## Build & Preview
+
+```powershell
+npm.cmd run build    # typecheck (DOM + service worker) and build frontend/dist/
+npm.cmd run preview  # serve frontend/dist locally on port 4173
+```
+
+## Test & Verification
 
 ```powershell
 npm.cmd run check:fixtures
 npm.cmd run typecheck
 npm.cmd run lint
 npm.cmd test
-npm.cmd run build
 npm.cmd run format:check
 node scripts/report-contrast.mjs
 node scripts/smoke.mjs # while dev and mock are running
 ```
 
-Tests include the four LevelBadge variants and axe checks, helper formatting, theme persistence, API envelopes/headers/errors, all 24 planned route matches, verbatim contract extraction, every fixture, contrast calculations, HTTP role/validation/lifecycle behavior, and real local Socket.IO connections. Socket tests need permission to connect to loopback. jsdom axe's canvas-dependent contrast rule is disabled; eight CSS color pairs are separately checked numerically against 4.5:1.
+Tests include component unit tests (`LevelBadge`, status helpers, camera frame pacing, audio timer, PWA service worker push handlers, geo helpers), routing guards and RBAC matrices, API envelope/token-refresh integration, `vitest-axe` accessibility checks across key screens, mock HTTP/Socket.IO integration tests, and contract fixture validation (`43` fixtures). Socket tests need loopback permission. jsdom axe's canvas-dependent contrast rule is disabled in unit tests; CSS token contrast ratios (>= 4.5:1 for light & dark themes) are verified numerically by `node scripts/report-contrast.mjs` and in headless Chrome.
 
 ## Mock controls
 
@@ -47,4 +83,4 @@ Contract source is currently named `00_SHARED_CONTRACT.md`, and the plan `02_FRO
 
 Verified official setup references: [Tailwind Vite](https://tailwindcss.com/docs/installation/using-vite), [shadcn Vite](https://ui.shadcn.com/docs/installation/vite), [Vite Node requirements](https://vite.dev/guide/), [React Router 8.5.3 data installation](https://reactrouter.com/start/data/installation), [MSW 3 migration](https://mswjs.io/docs/migrations/2.x-to-3.x).
 
-Current Vite selected TypeScript 7, incompatible with typescript-eslint's peer range; TypeScript is pinned to 6.0. The shadcn Radix nova preset provides the UI components; the requested RHF form wrapper came from the official new-york registry, preserving the existing label. The generated `cn` helper/font dependencies were removed in favor of plan-listed clsx/tailwind-merge and system fonts. `tw-animate-css`, `next-themes`, and type support packages were approved by Person B.
+Current Vite selected TypeScript 7, incompatible with typescript-eslint's peer range; TypeScript is pinned to 6.0. The shadcn Radix nova preset provides the UI components. The generated `cn` helper/font dependencies were removed in favor of plan-listed clsx/tailwind-merge and system fonts; `tw-animate-css` and type support packages are in `package.json`, while unused F0 scaffold dependencies (`date-fns`, `next-themes`) and unused UI wrappers were cleaned up in F8.

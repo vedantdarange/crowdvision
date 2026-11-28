@@ -232,9 +232,13 @@ function Shell({ audience, children }: ShellProps) {
         Skip to content
       </a>
       <aside id="venue-sidebar" className="cv-rail">
-        <Link to="/" className="cv-brand" aria-label="Crowd Safety Monitor">
+        <Link
+          to="/"
+          className="cv-brand"
+          aria-label="CrowdVision — Crowd Safety Monitor"
+        >
           <span className="brand-icon">
-            <Activity size={23} />
+            <Activity size={23} aria-hidden />
           </span>
           <span className="brand-name">CrowdVision</span>
         </Link>
