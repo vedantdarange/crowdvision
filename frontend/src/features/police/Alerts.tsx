@@ -82,7 +82,10 @@ export function Actions({ alert, choose }: { alert: Alert; choose: Choose }) {
 export function AlertCard({ alert, choose }: { alert: Alert; choose: Choose }) {
   return (
     <article className="alert-card">
-      <Link to={'/police/alerts/' + alert.id}>
+      <Link
+        className="inline-flex min-h-11 items-center"
+        to={'/police/alerts/' + alert.id}
+      >
         {alert.zone_name} · #{alert.id}
       </Link>
       <LevelBadge level={alert.level} />

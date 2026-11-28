@@ -57,7 +57,12 @@ export function Detail() {
     { choose, dialog } = useAlertDialog();
   return (
     <section className="police-page">
-      <Link to="/police/alerts">Alert queue</Link>
+      <Link
+        className="inline-flex min-h-11 items-center justify-self-start"
+        to="/police/alerts"
+      >
+        Alert queue
+      </Link>
       <h1>
         {a.zone_name} · Alert #{a.id}
       </h1>
@@ -95,7 +100,12 @@ export function Detail() {
           <SuspenseBoundary>
             <DetailMap id={a.zone_id} />
           </SuspenseBoundary>
-          <Link to={'/police/zones/' + a.zone_id}>Open zone live view</Link>
+          <Link
+            className="inline-flex min-h-11 items-center"
+            to={'/police/zones/' + a.zone_id}
+          >
+            Open zone live view
+          </Link>
         </section>
       </div>
       <Timeline events={a.events} />

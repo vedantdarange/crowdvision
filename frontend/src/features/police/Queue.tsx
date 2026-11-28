@@ -188,7 +188,10 @@ function Results({
                 {rows.map((a) => (
                   <tr key={a.id}>
                     <td>
-                      <Link to={'/police/alerts/' + a.id}>
+                      <Link
+                        className="inline-flex min-h-11 items-center"
+                        to={'/police/alerts/' + a.id}
+                      >
                         {a.zone_name} · #{a.id}
                       </Link>
                     </td>

@@ -137,7 +137,12 @@ export function PoliceZoneDetail() {
   if (!Number.isInteger(zoneId) || zoneId <= 0) {
     return (
       <section className="police-page">
-        <Link to="/police">Operations dashboard</Link>
+        <Link
+          to="/police"
+          className="inline-flex min-h-11 items-center justify-self-start"
+        >
+          Operations dashboard
+        </Link>
         <EmptyState
           title="Zone not found"
           description="Choose an active zone from the operations dashboard."
@@ -177,7 +182,9 @@ function ZoneLiveView({
   return (
     <section className="police-page">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Link to="/police">Operations dashboard</Link>
+        <Link to="/police" className="inline-flex min-h-11 items-center">
+          Operations dashboard
+        </Link>
         <Link
           to={`/police/monitor?zone_id=${zone.id}`}
           className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium no-underline hover:bg-muted"
@@ -307,7 +314,7 @@ function ZoneLiveView({
               action={
                 <Link
                   to={`/police/monitor?zone_id=${zone.id}`}
-                  className="underline"
+                  className="inline-flex min-h-11 items-center underline"
                 >
                   Open Monitor
                 </Link>

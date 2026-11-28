@@ -130,7 +130,10 @@ const ZoneStatusCard = memo(function ZoneStatusCard({
       <div className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="m-0">Zone status · {zone.name}</h2>
-          <Link to={`/police/zones/${zone.id}`} className="text-sm underline">
+          <Link
+            to={`/police/zones/${zone.id}`}
+            className="inline-flex min-h-11 items-center text-sm underline"
+          >
             Open zone live view
           </Link>
         </div>

@@ -165,7 +165,7 @@ function ZonesTableBody({
             {conflictZone.open_alert_id && (
               <Link
                 to={`/police/alerts/${conflictZone.open_alert_id}`}
-                className="underline"
+                className="inline-flex min-h-11 items-center underline"
               >
                 Open alert #{conflictZone.open_alert_id}
               </Link>
@@ -225,7 +225,7 @@ function ZonesTableBody({
                 <TableCell>
                   <Link
                     to={`/admin/sources?zone_id=${zone.id}`}
-                    className="underline"
+                    className="inline-flex min-h-11 items-center underline"
                   >
                     {zone.sources.length}{' '}
                     {zone.sources.length === 1 ? 'source' : 'sources'}
@@ -265,6 +265,67 @@ function ZonesTableBody({
             ))}
           </TableBody>
         </Table>
+      </div>
+
+      <div className="glass queue-cards">
+        {zones.map((zone) => (
+          <article key={zone.id} className="alert-card">
+            <div className="flex w-full flex-wrap items-center justify-between gap-2">
+              <strong className="inline-flex items-center gap-1.5">
+                <MapPin size={15} aria-hidden />
+                {zone.name}
+              </strong>
+              {zone.is_active ? (
+                <span className="bg-safe-bg text-safe border-safe/30 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold">
+                  <CheckCircle2 size={13} aria-hidden />
+                  Active
+                </span>
+              ) : (
+                <span className="bg-muted text-muted-foreground inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold">
+                  <XCircle size={13} aria-hidden />
+                  Inactive
+                </span>
+              )}
+            </div>
+            <p className="w-full text-sm">
+              {zone.mode === 'COUNT' ? 'Count' : 'Density'} ·{' '}
+              {formatThresholds(zone)} · {zone.area_m2.toFixed(1)} m²
+            </p>
+            <div className="police-actions w-full justify-between">
+              <Link
+                to={`/admin/sources?zone_id=${zone.id}`}
+                className="inline-flex min-h-11 items-center underline"
+              >
+                {zone.sources.length}{' '}
+                {zone.sources.length === 1 ? 'source' : 'sources'}
+              </Link>
+              <div className="police-actions">
+                <Button asChild variant="outline" className="min-h-11 gap-1.5">
+                  <Link to={`/admin/zones/${zone.id}/edit`}>
+                    <Pencil size={15} aria-hidden />
+                    Edit
+                  </Link>
+                </Button>
+                {zone.is_active && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 gap-1.5"
+                    onClick={(event) =>
+                      onRequestDeactivate({
+                        zone,
+                        trigger: event.currentTarget,
+                      })
+                    }
+                  >
+                    <PowerOff size={15} aria-hidden />
+                    Deactivate
+                  </Button>
+                )}
+              </div>
+            </div>
+          </article>
+        ))}
       </div>
     </div>
   );

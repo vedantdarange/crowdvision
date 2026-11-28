@@ -68,7 +68,10 @@ export function LiveMap() {
         >
           <div className="mb-1 flex items-center justify-between gap-2 text-xs font-semibold uppercase tracking-wide">
             <span>Latest advisories</span>
-            <Link className="underline" to="/advisories">
+            <Link
+              className="inline-flex min-h-11 items-center underline"
+              to="/advisories"
+            >
               All advisories ({advisories.length})
             </Link>
           </div>
@@ -126,7 +129,10 @@ export function LiveMap() {
                   {z.name}
                 </button>
                 <Reading zone={z} />
-                <Link className="underline" to={'/zones/' + z.zone_id}>
+                <Link
+                  className="inline-flex min-h-11 items-center underline"
+                  to={'/zones/' + z.zone_id}
+                >
                   View {z.name}
                 </Link>
               </article>
@@ -174,7 +180,7 @@ export function ZoneDetail() {
       {alternatives.length ? (
         alternatives.map((z) => (
           <Link
-            className="block underline"
+            className="flex min-h-11 items-center underline"
             key={z.zone_id}
             to={'/zones/' + z.zone_id}
           >
@@ -202,7 +208,11 @@ export function Help() {
       <h1 className="text-3xl font-semibold">Help</h1>
       <h2>Emergency numbers</h2>
       {data.emergency_numbers.map((n) => (
-        <a className="block underline" key={n.label} href={'tel:' + n.number}>
+        <a
+          className="flex min-h-11 items-center underline"
+          key={n.label}
+          href={'tel:' + n.number}
+        >
           {n.label} · {n.number}
         </a>
       ))}

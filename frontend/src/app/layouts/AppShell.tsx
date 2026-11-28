@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Link,
   NavLink,
   Outlet,
   ScrollRestoration,
+  useLocation,
   useNavigate,
 } from 'react-router';
 import {
@@ -147,8 +148,30 @@ function Shell({ audience, children }: ShellProps) {
     }
   }
   const professional = audience === 'admin' || audience === 'police';
-  const { user, logout } = useSession();
+  const { user, logout, logoutFromPath, clearLogoutFromPath } = useSession();
   const [sendingTestPush, setSendingTestPush] = useState(false);
+
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const currentPath = location.pathname + location.search + location.hash;
+    if (logoutFromPath && currentPath !== logoutFromPath) {
+      clearLogoutFromPath();
+    }
+  }, [
+    logoutFromPath,
+    clearLogoutFromPath,
+    location.pathname,
+    location.search,
+    location.hash,
+  ]);
+
+  function handleExplicitLogout() {
+    const currentPath = location.pathname + location.search + location.hash;
+    logout({ manualFrom: currentPath });
+    void navigate('/', { replace: true });
+  }
 
   async function handleSendTestPush() {
     if (sendingTestPush) return;
@@ -166,7 +189,6 @@ function Shell({ audience, children }: ShellProps) {
       setSendingTestPush(false);
     }
   }
-  const navigate = useNavigate();
   const workspaces = spaces.filter(
     ([path]) =>
       path === '/' ||
@@ -232,9 +254,13 @@ function Shell({ audience, children }: ShellProps) {
         Skip to content
       </a>
       <aside id="venue-sidebar" className="cv-rail">
-        <Link to="/" className="cv-brand" aria-label="Crowd Safety Monitor">
+        <Link
+          to="/"
+          className="cv-brand"
+          aria-label="CrowdVision — Crowd Safety Monitor"
+        >
           <span className="brand-icon">
-            <Activity size={23} />
+            <Activity size={23} aria-hidden />
           </span>
           <span className="brand-name">CrowdVision</span>
         </Link>
@@ -300,12 +326,7 @@ function Shell({ audience, children }: ShellProps) {
                       Send test notification
                     </DropdownMenuItem>
                   )}
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      logout();
-                      void navigate('/', { replace: true });
-                    }}
-                  >
+                  <DropdownMenuItem onSelect={handleExplicitLogout}>
                     Log out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -353,13 +374,7 @@ function Shell({ audience, children }: ShellProps) {
               {navigation(true)}
               {!professional && user && (
                 <SheetClose asChild>
-                  <button
-                    className="rail-link"
-                    onClick={() => {
-                      logout();
-                      void navigate('/', { replace: true });
-                    }}
-                  >
+                  <button className="rail-link" onClick={handleExplicitLogout}>
                     Log out
                   </button>
                 </SheetClose>

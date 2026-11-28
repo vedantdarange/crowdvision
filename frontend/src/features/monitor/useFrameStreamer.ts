@@ -305,8 +305,8 @@ export function useFrameStreamer({
       const aspect = video.videoHeight / video.videoWidth;
       const w = frameWidth;
       const h = Math.max(1, Math.round(w * aspect));
-      canvas.width = w;
-      canvas.height = h;
+      if (canvas.width !== w) canvas.width = w;
+      if (canvas.height !== h) canvas.height = h;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
         scheduleAttempt(intervalMs);

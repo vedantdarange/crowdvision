@@ -11,16 +11,16 @@ export function RequireRole({
   role: Role;
   children: ReactNode;
 }) {
-  const { user, tokens } = useSession();
+  const { user, tokens, logoutFromPath } = useSession();
   const location = useLocation();
   if (!user && tokens) return <p role="status">Checking your session…</p>;
-  if (!user)
-    return (
-      <Navigate
-        replace
-        to={loginPath(location.pathname + location.search + location.hash)}
-      />
-    );
+  if (!user) {
+    const currentPath = location.pathname + location.search + location.hash;
+    if (logoutFromPath === currentPath) {
+      return <Navigate replace to="/" />;
+    }
+    return <Navigate replace to={loginPath(currentPath)} />;
+  }
   return allows(user.role, role) ? (
     children
   ) : (
