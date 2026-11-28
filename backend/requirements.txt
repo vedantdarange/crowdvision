@@ -43,8 +43,8 @@ Flask-Limiter==3.12.0
 shapely==2.1.1
 
 # Push (B6)
-# pywebpush
-# py-vapid
+pywebpush==2.5.0
+py-vapid==1.9.6
 
 # Tests
 pytest==8.4.0

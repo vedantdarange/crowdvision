@@ -146,6 +146,7 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     from app.api.v1.auth import auth_bp
     from app.api.v1.config import config_bp
     from app.api.v1.health import health_bp
+    from app.api.v1.push import push_bp
     from app.api.v1.sources import sources_bp
     from app.api.v1.users import users_bp
     from app.api.v1.zones import zones_bp
@@ -158,6 +159,7 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     flask_app.register_blueprint(config_bp, url_prefix="/api/v1")
     flask_app.register_blueprint(alerts_bp, url_prefix="/api/v1")
     flask_app.register_blueprint(advisories_bp, url_prefix="/api/v1")
+    flask_app.register_blueprint(push_bp, url_prefix="/api/v1")
 
     # -----------------------------------------------------------------------
     # CLI commands
@@ -210,6 +212,9 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
         from app.realtime.tasks import start_background_loop
 
         start_background_loop(flask_app)
+        if hasattr(container.notifier, "start"):
+            container.notifier.start(flask_app)
+            atexit.register(container.notifier.stop)
         container.detection_manager.start(flask_app)
         atexit.register(container.detection_manager.stop)
 

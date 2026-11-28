@@ -15,12 +15,13 @@ from app.config import Settings, settings as default_settings
 from app.core.clock import Clock, SystemClock
 from app.detection.manager import DetectionManager
 from app.engine.zone_engine import ZoneEngine
-from app.push.notifier import NoOpNotifier, Notifier
+from app.push.notifier import Notifier, WebPushNotifier
 from app.realtime.emitter import RealtimeEmitter
 from app.realtime.tasks import BackgroundSchedulerState, SourceStatusTracker
 from app.repositories.advisory_repo import AdvisoryRepository
 from app.repositories.alert_repo import AlertRepository
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.push_repo import PushSubscriptionRepository
 from app.repositories.settings_repo import SettingsRepository
 from app.repositories.source_repo import SourceRepository
 from app.repositories.user_repo import UserRepository
@@ -31,6 +32,7 @@ from app.services.alert_service import AlertService
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 from app.services.engine_sync import reload_engine_from_db
+from app.services.push_service import PushService
 from app.services.settings_service import SettingsService
 from app.services.source_service import SourceService
 from app.services.user_service import UserService
@@ -49,6 +51,7 @@ class Container:
     alert_repo: AlertRepository
     advisory_repo: AdvisoryRepository
     zone_sample_repo: ZoneSampleRepository
+    push_repo: PushSubscriptionRepository
     audit_service: AuditService
     auth_service: AuthService
     user_service: UserService
@@ -57,6 +60,7 @@ class Container:
     settings_service: SettingsService
     alert_service: AlertService
     advisory_service: AdvisoryService
+    push_service: PushService
     zone_engine: ZoneEngine
     emitter: RealtimeEmitter
     notifier: Notifier
@@ -79,17 +83,27 @@ def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container
     alert_repo = AlertRepository()
     advisory_repo = AdvisoryRepository()
     zone_sample_repo = ZoneSampleRepository()
+    push_repo = PushSubscriptionRepository()
 
     zone_engine = ZoneEngine(auto_commit_alerts=False)
     emitter = RealtimeEmitter(clock=clock)
-    notifier = NoOpNotifier()
+    notifier = WebPushNotifier(
+        push_repo=push_repo,
+        zone_repo=zone_repo,
+        vapid_private_key=cfg.vapid_private_key,
+        vapid_public_key=cfg.vapid_public_key,
+        vapid_subject=cfg.vapid_subject,
+        clock=clock,
+        flask_app=flask_app,
+    )
     source_status_tracker = SourceStatusTracker()
     task_state = BackgroundSchedulerState()
 
     audit_service = AuditService(audit_repo)
     auth_service = AuthService(user_repo)
     user_service = UserService(user_repo, audit_service)
-    settings_service = SettingsService(settings_repo, audit_service)
+    settings_service = SettingsService(settings_repo, audit_service, app_settings=cfg)
+    push_service = PushService(push_repo, notifier, clock=clock)
 
     def _reload_on_settings_change() -> None:
         with engine_lock:
@@ -168,6 +182,7 @@ def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container
         alert_repo=alert_repo,
         advisory_repo=advisory_repo,
         zone_sample_repo=zone_sample_repo,
+        push_repo=push_repo,
         audit_service=audit_service,
         auth_service=auth_service,
         user_service=user_service,
@@ -176,6 +191,7 @@ def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container
         settings_service=settings_service,
         alert_service=alert_service,
         advisory_service=advisory_service,
+        push_service=push_service,
         zone_engine=zone_engine,
         emitter=emitter,
         notifier=notifier,

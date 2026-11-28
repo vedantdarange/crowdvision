@@ -19,6 +19,8 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("TRUSTED_PROXY_COUNT", "0")
 os.environ.setdefault("DEMO_CENTER", "28.6139,77.2090")
 os.environ.setdefault("DETECTOR_BACKEND", "fake")
+os.environ.setdefault("VAPID_PRIVATE_KEY", "")
+os.environ.setdefault("VAPID_PUBLIC_KEY", "")
 
 
 @pytest.fixture(scope="session")
@@ -78,6 +80,11 @@ def clean_db(app):
                 c.zone_engine.reset()
             if hasattr(c, "emitter"):
                 c.emitter.reset()
+            if hasattr(c, "notifier"):
+                if hasattr(c.notifier, "stop"):
+                    c.notifier.stop(timeout=2.0)
+                if hasattr(c.notifier, "reset"):
+                    c.notifier.reset()
             if hasattr(c, "source_status_tracker"):
                 c.source_status_tracker.reset()
             if hasattr(c, "task_state"):
