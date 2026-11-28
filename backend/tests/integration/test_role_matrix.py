@@ -121,6 +121,10 @@ ROUTE_MATRIX: list[tuple[str, str, str, dict[str, Any] | None]] = [
     ("GET", "/api/v1/reports/mine", "citizen", None),
     ("GET", "/api/v1/reports", "police", None),
     ("PATCH", "/api/v1/reports/{report_id}", "police", {"status": "VERIFIED", "review_note": "ok"}),
+    # --- B8 Analytics & Audit ---
+    ("GET", "/api/v1/analytics/summary", "police", None),
+    ("GET", "/api/v1/analytics/export/alerts.csv", "admin", None),
+    ("GET", "/api/v1/audit-logs", "admin", None),
 ]
 
 _ALLOWED_ROLES = {

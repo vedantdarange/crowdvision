@@ -20,6 +20,7 @@ from app.realtime.emitter import RealtimeEmitter
 from app.realtime.tasks import BackgroundSchedulerState, SourceStatusTracker
 from app.repositories.advisory_repo import AdvisoryRepository
 from app.repositories.alert_repo import AlertRepository
+from app.repositories.analytics_repo import AnalyticsRepository
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.push_repo import PushSubscriptionRepository
 from app.repositories.report_repo import ReportRepository
@@ -30,6 +31,7 @@ from app.repositories.zone_repo import ZoneRepository
 from app.repositories.zone_sample_repo import ZoneSampleRepository
 from app.services.advisory_service import AdvisoryService
 from app.services.alert_service import AlertService
+from app.services.analytics_service import AnalyticsService
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 from app.services.engine_sync import reload_engine_from_db
@@ -55,6 +57,7 @@ class Container:
     zone_sample_repo: ZoneSampleRepository
     push_repo: PushSubscriptionRepository
     report_repo: ReportRepository
+    analytics_repo: AnalyticsRepository
     audit_service: AuditService
     auth_service: AuthService
     user_service: UserService
@@ -65,6 +68,7 @@ class Container:
     advisory_service: AdvisoryService
     push_service: PushService
     report_service: ReportService
+    analytics_service: AnalyticsService
     zone_engine: ZoneEngine
     emitter: RealtimeEmitter
     notifier: Notifier
@@ -90,6 +94,7 @@ def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container
     zone_sample_repo = ZoneSampleRepository()
     push_repo = PushSubscriptionRepository()
     report_repo = ReportRepository()
+    analytics_repo = AnalyticsRepository()
 
     zone_engine = ZoneEngine(auto_commit_alerts=False)
     emitter = RealtimeEmitter(clock=clock)
@@ -186,6 +191,7 @@ def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container
         notifier=notifier,
         clock=clock,
     )
+    analytics_service = AnalyticsService(analytics_repo=analytics_repo, clock=clock)
 
     container = Container(
         clock=clock,
@@ -200,6 +206,7 @@ def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container
         zone_sample_repo=zone_sample_repo,
         push_repo=push_repo,
         report_repo=report_repo,
+        analytics_repo=analytics_repo,
         audit_service=audit_service,
         auth_service=auth_service,
         user_service=user_service,
@@ -210,6 +217,7 @@ def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container
         advisory_service=advisory_service,
         push_service=push_service,
         report_service=report_service,
+        analytics_service=analytics_service,
         zone_engine=zone_engine,
         emitter=emitter,
         notifier=notifier,

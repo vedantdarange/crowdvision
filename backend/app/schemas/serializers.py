@@ -12,7 +12,16 @@ from typing import TYPE_CHECKING, Any
 from app.core.time import to_iso_z
 
 if TYPE_CHECKING:
-    from app.models.models import Advisory, AlertEvent, AlertModel, Report, Source, User, Zone
+    from app.models.models import (
+        Advisory,
+        AlertEvent,
+        AlertModel,
+        AuditLog,
+        Report,
+        Source,
+        User,
+        Zone,
+    )
 
 LIVE_STATE_PLACEHOLDER: dict[str, Any] = {
     "level": "NO_DATA",
@@ -244,4 +253,27 @@ def serialize_report(
         "reviewed_by": _person_ref(reviewer) if report.reviewed_by is not None else None,
         "reviewed_at": to_iso_z(report.reviewed_at),
         "review_note": report.review_note,
+    }
+
+
+def serialize_audit_log(
+    entry: "AuditLog",
+    *,
+    actor: "User | None" = None,
+) -> dict[str, Any]:
+    """Return an AuditLog dict (contract §5 / B8)."""
+    try:
+        parsed_data = json.loads(entry.data_json) if entry.data_json else {}
+    except Exception:
+        parsed_data = {}
+    if not isinstance(parsed_data, dict):
+        parsed_data = {}
+    return {
+        "id": entry.id,
+        "actor": _person_ref(actor) if entry.actor_id is not None else None,
+        "action": entry.action,
+        "entity_type": entry.entity_type,
+        "entity_id": entry.entity_id,
+        "data": parsed_data,
+        "created_at": to_iso_z(entry.created_at),
     }

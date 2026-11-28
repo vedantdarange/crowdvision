@@ -1,45 +1,44 @@
 # Backend status — updated 2026-11-28
-## Phase: B7 (fixes verified — ready to commit)
+## Phase: B8 (Windows wsgi fix verified — ready to commit)
 ## Done since last update
-- Implemented Phase B7 (M6 — Citizen reports, privacy-preserving RAM upload, rate limiting, and retention) on `be/b7-citizen-reports` (branched from committed B6 `4e10e44`):
-  - **`app/schemas/reports.py`, `app/schemas/serializers.py`, `app/repositories/report_repo.py`**:
-    - Added `CrowdReportFormSchema`, `SosReportCreateRequest`, `ReportReviewRequest`, `serialize_report()` matching contract §5 & fixtures, and `ReportRepository` (`list_mine`, `list_filtered`, `delete_older_than`, and atomic `claim_review()` `WHERE id = :id AND status = 'PENDING'`).
-  - **`app/services/report_service.py`, `app/api/v1/reports.py`, `app/detection/manager.py`**:
-    - `POST /api/v1/reports/crowd` (`citizen+`): validates `multipart/form-data`, JPEG/PNG MIME + magic bytes, `MAX_CONTENT_LENGTH` 5 MiB (`5,242,880` B) total multipart request cap (`413 PAYLOAD_TOO_LARGE` / `422 VALIDATION_ERROR`), finite `lat`/`lng` (`-90..90` / `-180..180`), reads upload strictly in RAM via `MemoryRequest`, runs synchronous single-frame `DetectionManager.detect_once()` (`503 DETECTOR_UNAVAILABLE` when down/full/timed out; `422` on `BAD_IMAGE`), discards bytes immediately, matches GPS via `shapely` (`shape(geom).contains(Point(lng, lat))`) for `zone_id` & `density_hint`, and emits `report:new` to `role:police` after commit.
-    - `POST /api/v1/reports/sos` (`citizen+`): validates `SosType`, matches GPS to active zone, persists `PENDING` SOS, emits `report:new` to `role:police`, and calls `notifier.notify_sos()` post-commit (`CRUSH_RISK`/`FIRE`/`MEDICAL` only; `LOST_CHILD`/`OTHER` in-app only).
-    - `GET /reports/mine` (`citizen+`), `GET /reports` (`police+` with `kind`/`status`/`zone_id`/pagination), and atomic `PATCH /reports/{id}` (`police+`): `ReportService.review()` claims `PENDING -> VERIFIED|DISMISSED` atomically via `claim_review()`, saves winning decision + reviewer + timestamp + note + `REPORT_REVIEWED` audit entry in one transaction, commits before emitting `report:updated` once per unique connected socket (`to=["role:police", f"user:{owner}"]` deduplicating overlapping rooms), preserves `404` on missing reports, and returns `409 INVALID_TRANSITION` if already reviewed.
-    - Per-user rate limiting via `_user_rate_limit_key()` (`user:{id}` from JWT identity): `1/minute` on `/reports/crowd` and `3 per 10 minutes` on `/reports/sos` returning `429 RATE_LIMITED`.
-  - **`app/extensions.py`, `app/__init__.py`, `tests/conftest.py`**:
-    - Fixed multi-app `RATELIMIT_ENABLED` isolation in `create_app()` (`RATELIMIT_ENABLED=True` default + `@limiter.request_filter` checking per-app `current_app.config["RATELIMIT_ENABLED"]`, avoiding storage wipes or singleton `limiter.enabled = False` leakage when sibling apps disable limits in the same process).
-  - **`app/realtime/tasks.py`, `backend/README.md`, `.gitignore`**:
-    - Extended hourly retention job to delete `reports` older than `REPORT_RETENTION_DAYS` (`30` days default) alongside `zone_samples` (> 7 days).
-    - Documented RAM-only upload handling, 5 MiB (`5,242,880` B) total `multipart/form-data` `MAX_CONTENT_LENGTH` request cap, and `REPORT_RETENTION_DAYS` deletion policy in [backend/README.md](file:///d:/crowdvision/backend/README.md); excluded `crowd-photos-testing/` in `.gitignore`.
+- Implemented Phase B8 (M7 — Analytics, CSV export, audit log API, retention verification, demo SPA serving, and startup safety check) on branch `be/b8-analytics-demo` (branched from committed B7 `dc52f27`):
+  - **`app/repositories/analytics_repo.py`, `app/services/analytics_service.py`, `app/api/v1/analytics.py`, `app/container.py`**:
+    - Added `GET /api/v1/analytics/summary?from&to` (`police+`, defaults to last 24 h): computes `alerts_by_zone` (`warning`/`critical` grouped by `peak_level`), `avg_ack_seconds` / `avg_resolve_seconds` (`null` when none), `peak_hours` per zone from `zone_samples` converted to `Asia/Kolkata` (`UTC+5:30`, SQL `datetime(ts, '+330 minutes')`) before bucketing by hour with `timezone: "Asia/Kolkata"`, and `reports_by_status` (all 3 statuses always present, `0` when none).
+    - Added `GET /api/v1/analytics/export/alerts.csv?from&to` (`admin`): UTF-8 with BOM (`\xef\xbb\xbf`) for Excel, `text/csv; charset=utf-8`, `Content-Disposition: attachment; filename="alerts.csv"`, RFC 4180 CSV escaping, exact contract columns (`id, zone, level, peak_level, status, peak_density, peak_count, created_at, acknowledged_at, resolved_at`), and ISO-Z timestamps.
+  - **`app/repositories/audit_repo.py`, `app/services/audit_service.py`, `app/schemas/serializers.py`, `app/api/v1/audit.py`**:
+    - Added `AuditRepository.list_paginated()`, `serialize_audit_log()`, and `GET /api/v1/audit-logs?page&limit&action=&actor_id=` (`admin`).
+  - **`app/__init__.py`, `app/cli.py`, `wsgi.py`**:
+    - Added `SERVE_FRONTEND=true` SPA static serving from `frontend/dist` (`/` and deep links such as `/police/alerts/3` fall back to `index.html` with `Cache-Control: no-cache`; `sw.js` served with `Cache-Control: no-cache`; `/assets/*` served with `Cache-Control: public, max-age=31536000, immutable`; `/api/*` and `/socket.io/*` never hit SPA fallback so `/api/unknown` returns JSON `404 NOT_FOUND`).
+    - Added startup safety check (`_enforce_no_default_admin_passwords`): refuses startup when `SERVE_FRONTEND=true` and any `admin` user still verifies against `Demo@1234` unless `ALLOW_DEFAULT_PASSWORDS=true` (`flask set-password <email>` is skipped by `_one_shot_cli` so the documented fix can run).
+    - Set `with_appcontext=False` on `@app.cli.command` handlers in `app/cli.py` so `CliRunner` invocations in tests do not load `wsgi.py` (`create_app()` in non-testing mode) and spawn background workers.
+    - Updated `wsgi.py` so `python wsgi.py` runs `socketio.run(..., debug=False, use_reloader=False, allow_unsafe_werkzeug=True)` when `FLASK_ENV=production` (supporting `PORT` env override, default `5000`), and guarded module-level `app = create_app() if __name__ != "__mp_main__" else None` so Windows `multiprocessing.spawn` detector child processes do not create another Flask app while keeping `wsgi:app` exposed for Flask CLI and Gunicorn.
+  - **`backend/README.md`**:
+    - Documented dev mode, demo mode (`gunicorn -w 1 --threads 100 -b 0.0.0.0:5000 wsgi:app` on Linux/macOS with explanation of why `-w 1` is mandatory for in-process `ZoneEngine`/worker/Socket.IO/limiter state), Windows demo alternative (`python wsgi.py` and why Gunicorn/Waitress cannot be used for WebSockets on Windows), `cloudflared tunnel --url http://localhost:5000`, env variables, and the default-password startup safety check + `flask set-password`.
   - **Tests**:
-    - Added [tests/integration/test_reports.py](file:///d:/crowdvision/backend/tests/integration/test_reports.py) (14 tests: inside/outside zone GPS matching, `report:new`/`report:updated` room isolation, single-delivery `report:updated` on overlapping `role:police` + `user:{id}` self-review socket, `> 500 KB` upload zero-temp-file verification, exact `5,242,880` B vs `5,242,881` B multipart boundary + 5 MiB raw file `413`, `422` validation, `503` worker down & queue full, late timed-out result discarded before next crowd report, real `crowd-photos-testing` photo with `ultralytics`, `SOS` `FIRE`/`CRUSH_RISK`/`MEDICAL` vs `OTHER`/`LOST_CHILD` `FakeNotifier` filtering, double-review `409`, post-claim rollback & retry, deterministic synchronized concurrent two-officer `VERIFIED`/`DISMISSED` race on file-backed SQLite DB, engine/alert isolation, `FakeClock` retention purge, per-user rate limits across IPs).
-    - Extended [tests/integration/test_rate_limit.py](file:///d:/crowdvision/backend/tests/integration/test_rate_limit.py) (4 tests) with `test_create_app_rate_limit_isolation_across_both_orders` (`disabled_first` and `default_first` HTTP `/api/v1/reports/sos` verification).
-    - Extended [tests/integration/test_role_matrix.py](file:///d:/crowdvision/backend/tests/integration/test_role_matrix.py) with all 5 `/reports/*` endpoints (`40` parametrized RBAC routes).
-    - Focused reports suite (`tests/integration/test_reports.py`): **`14 passed in 46.30s`**.
-    - Full backend suite (`.\.venv\Scripts\python.exe -m pytest tests/ -v --tb=short`): **`285 passed, 1 skipped in 208.45s`** (`1` expected skip: `test_journal_mode_wal` on `:memory:` SQLite, covered by `test_journal_mode_wal_on_file_db`).
-    - Verified all 8 JPEG images in `crowd-photos-testing/` via `POST /api/v1/reports/crowd` on `backend/.venv-gpu` (`people_model.pt`, RTX 4060): all `8` returned `HTTP 201` with `8` `report:new` events delivered to the police Socket.IO client.
+    - Added [tests/integration/test_analytics_audit_demo.py](file:///d:/crowdvision/backend/tests/integration/test_analytics_audit_demo.py) (9 tests): analytics summary against seeded alerts/samples/reports, IST midnight UTC (`18:45 UTC` → hour `0`) & half-hour offset bucketing, CSV export BOM/headers/escaping/range, audit log pagination & filters, hourly `FakeClock` retention deletion of both `zone_samples` (> 7 days) and `reports` (> `REPORT_RETENTION_DAYS`), startup default-password refusal & `flask set-password` / `ALLOW_DEFAULT_PASSWORDS=true` recovery, `SERVE_FRONTEND=true` SPA deep links, cache headers, and `/api/unknown` JSON 404, plus `TestWsgiSubprocessEntryPoint` (`wsgi:app` import check and real Windows `python wsgi.py` subprocess startup with `DETECTOR_BACKEND=fake`, bounded `/api/v1/health` `detector="ready"` / `worker_alive=true`, 1 detector worker, WebSocket `frame:submit` → `frame:result`, and clean shutdown with zero orphan workers).
+    - Extended [tests/integration/test_role_matrix.py](file:///d:/crowdvision/backend/tests/integration/test_role_matrix.py) with `/analytics/summary`, `/analytics/export/alerts.csv`, and `/audit-logs` (`43` parametrized RBAC routes).
+    - `pip check`: **`No broken requirements found.`**
+    - Full backend suite (`.\.venv\Scripts\python.exe -m pytest tests/ -v --tb=short`): **`297 passed, 1 skipped in 182.40s`** (`1` expected skip: `test_journal_mode_wal` on `:memory:` SQLite, covered by `test_journal_mode_wal_on_file_db`).
 
 ## In progress
-- None (Phase B7 fixes verified on `be/b7-citizen-reports`; ready to commit before starting B8).
+- None (Phase B8 complete on `be/b8-analytics-demo`; awaiting `npm run build` by Person B + manual browser check at `http://localhost:5000/police/alerts/3` and commit).
 
 ## Blocked / questions for Person A
 - None.
 
 ## Requests for AI-B (frontend)
-- Ready for F5 & F6 integration: Web Push (`GET /config` `vapid_public_key`, `/push/*`) and Citizen Reports (`/reports/crowd`, `/reports/sos`, `/reports/mine`, `/reports`, `PATCH /reports/{id}`, `report:new`, `report:updated`) are live per shared contract (`POST /reports/crowd` enforces a 5 MiB total multipart request cap via `MAX_CONTENT_LENGTH`).
+- Ready for **M7 integration & demo build**: `/api/v1/analytics/summary`, `/api/v1/analytics/export/alerts.csv`, `/api/v1/audit-logs`, and `SERVE_FRONTEND=true` SPA serving (`frontend/dist` with `/police/alerts/3` fallback & `sw.js` `no-cache`) are ready. Run `npm run build` in `frontend/` and verify `http://localhost:5000/police/alerts/3`.
 
 ## Untested / known issues
-- Locked Android Chrome manual test (`docs/DEMO.md`) via `cloudflared` HTTPS tunnel + Person B's F5 push screen has not yet been run (all `pywebpush` HTTP calls in automated tests used mocked `webpush` transport).
-- Browser capture-to-result latency (joint frontend webcam stream + Person B's monitor screen) remains pending Person B's monitor test.
+- Real frontend deep-link and refresh test pending Person B’s build (SPA fallback, `sw.js`, and `/assets/*` headers verified using a temp `dist/` fixture).
+- Linux `gunicorn -w 1 --threads 100 wsgi:app` verified by inspection only (Gunicorn requires POSIX and is not installed in WSL here; `wsgi:app` exposes Flask `app` cleanly under `__name__ == "wsgi"`, and `simple_websocket` source inspection confirmed `gunicorn.socket` and `werkzeug.socket` support, while Waitress lacks raw socket access for WebSockets).
+- Locked Android Chrome manual test (`docs/DEMO.md`) via `cloudflared` HTTPS tunnel and joint webcam/monitor latency check remain pending Person B integration.
 - Carried over: `flask set-password` failure paths, `trackers` real wheel installation (`USE_TRACKER=false` default), and `test_journal_mode_wal` on `:memory:` SQLite.
 
 ## Next 3 steps
-1. Commit Phase B7 changes on `be/b7-citizen-reports` (leaving `frontend/package.json` and `crowd-photos-testing/` out).
-2. Run manual Android Chrome + `cloudflared` HTTPS tunnel Web Push test (`docs/DEMO.md`) and joint webcam/monitor test with Person B.
-3. Begin Phase B8 (M7): Analytics summary & CSV export, startup default-password check, `/audit-logs`, and demo static serving (`SERVE_FRONTEND=true`).
+1. Build frontend (`npm run build` by Person B) and verify opening `http://localhost:5000/police/alerts/3` directly in the browser with `SERVE_FRONTEND=true`.
+2. Review and commit Phase B8 on `be/b8-analytics-demo` (leaving `frontend/package.json` and `crowd-photos-testing/` out).
+3. Begin Phase B9 (M8): `eval/eval_counting.py`, `eval/eval_latency.py` alert/e2e soak testing, tracker vs raw-count comparison in `docs/EVALUATION.md`, and final freeze.
 
 ## Numbers (latency, MAE, coverage) once available
 - **CPU (`backend/.venv`)** — `AMD Ryzen 7 7840HS`, `people_model.pt` (`imgsz=640`, `conf=0.35`, `USE_TRACKER=false`, `torch 2.15.0+cpu`):

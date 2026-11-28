@@ -190,7 +190,7 @@ def _seed_zones(db_session, centre_lat: float, centre_lng: float) -> None:  # ty
 def register_commands(app: Flask) -> None:
     """Register all CLI commands on *app*."""
 
-    @app.cli.command("seed-demo")
+    @app.cli.command("seed-demo", with_appcontext=False)
     def seed_demo() -> None:
         """Seed demo users, zones, sources, settings and help_info.
 
@@ -255,7 +255,7 @@ def register_commands(app: Flask) -> None:
                 click.echo(f"  {email}: {pw}")
             click.echo("=======================================================\n")
 
-    @app.cli.command("set-password")
+    @app.cli.command("set-password", with_appcontext=False)
     @click.argument("email")
     def set_password(email: str) -> None:
         """Set a new password for the user with EMAIL (prompts interactively)."""
@@ -280,7 +280,7 @@ def register_commands(app: Flask) -> None:
             db.session.commit()
             click.echo(f"Password updated for {email}.")
 
-    @app.cli.command("fake-feed")
+    @app.cli.command("fake-feed", with_appcontext=False)
     @click.option("--zone", "zone_id", type=int, required=True, help="Target zone ID.")
     @click.option(
         "--profile",
