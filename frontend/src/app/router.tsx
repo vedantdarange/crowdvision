@@ -184,10 +184,32 @@ export const routes: RouteObject[] = [
       {
         handle: { role: 'admin' },
         children: [
-          page('/admin/zones', 'Zones', 'F7'),
-          page('/admin/zones/new', 'New zone', 'F7'),
-          page('/admin/zones/:id/edit', 'Edit zone', 'F7'),
-          page('/admin/sources', 'Sources', 'F7'),
+          {
+            ...page('/admin/zones', 'Zones', 'F7'),
+            lazy: async () => ({
+              Component: (await import('@/features/admin')).AdminZonesPage,
+            }),
+          },
+          {
+            ...page('/admin/zones/new', 'New zone', 'F7'),
+            lazy: async () => ({
+              Component: (await import('@/features/admin/ZoneEditor'))
+                .ZoneEditorPage,
+            }),
+          },
+          {
+            ...page('/admin/zones/:id/edit', 'Edit zone', 'F7'),
+            lazy: async () => ({
+              Component: (await import('@/features/admin/ZoneEditor'))
+                .ZoneEditorPage,
+            }),
+          },
+          {
+            ...page('/admin/sources', 'Sources', 'F7'),
+            lazy: async () => ({
+              Component: (await import('@/features/admin')).AdminSourcesPage,
+            }),
+          },
           page('/admin/users', 'Users', 'F7'),
           page('/admin/settings', 'Settings', 'F7'),
           page('/admin/analytics', 'Analytics', 'F7'),
