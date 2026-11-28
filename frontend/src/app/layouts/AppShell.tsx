@@ -125,7 +125,8 @@ function MenuLinks({
     );
   });
 }
-function Shell({ audience }: { audience: Audience }) {
+type ShellProps = { audience: Audience; children?: import('react').ReactNode };
+function Shell({ audience, children }: ShellProps) {
   const { theme, toggle } = useTheme();
   const connection = useConnection((s) => s.status);
   const [collapsed, setCollapsed] = useState(() => {
@@ -287,6 +288,7 @@ function Shell({ audience }: { audience: Audience }) {
           </div>
         </header>
         <main id="main" tabIndex={-1}>
+          {children}
           <SuspenseBoundary>
             <Outlet />
           </SuspenseBoundary>
@@ -339,14 +341,14 @@ function Shell({ audience }: { audience: Audience }) {
     </div>
   );
 }
-export function AppShell({ audience }: { audience: Audience }) {
+export function AppShell({ audience, children }: ShellProps) {
   return (
     <ThemeProvider
       defaultTheme={
         audience === 'admin' || audience === 'police' ? 'dark' : 'light'
       }
     >
-      <Shell audience={audience} />
+      <Shell audience={audience}>{children}</Shell>
     </ThemeProvider>
   );
 }

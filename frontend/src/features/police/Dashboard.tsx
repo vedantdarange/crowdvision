@@ -12,9 +12,6 @@ export function Dashboard() {
     <section className="police-page">
       <header>
         <h1>Operations dashboard</h1>
-        <span className="armed-chip" title="Preview indicator">
-          Alerts armed · preview
-        </span>
       </header>
       <div className="police-grid">
         <section className="glass">

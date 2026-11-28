@@ -1,5 +1,15 @@
 # Frontend status — 28 November 2026
 
+## F3b — Alert center implemented, human listening check pending
+
+Police and admin routes share one alert center. It restores NEW alerts and pending urgent SOS reports on entry and reconnect, shows three banners plus an overflow count, and uses F3a's optimistic acknowledgement mutation. Alert density is labelled “Peak” to match the contract field. Arming requests audio, notification permission and vibration in one gesture. Arming intent and mute persist, while reload requires a fresh tap. Push subscription remains scheduled for F5.
+
+**Verification from `frontend/`.** `npm.cmd test` passed 122/122 tests in 13 files (15.35 s). Coverage includes StrictMode cleanup, vibration requests, warning and critical sound timing, mute, audio suspension, the 60-second cap, optimistic acknowledgement, all five SOS types, reduced motion and banner axe. The jsdom axe check excludes color contrast. `npm.cmd run lint` and `npm.cmd run build` passed, including TypeScript. Vite emitted its large-chunk warning. The first suite had 10 sandbox loopback failures and five read-only module-spy errors. Loopback permission and a module mock fixed these. The first build with the new tests rejected Promise.withResolvers. The test now uses a standard Promise.
+
+**Desktop Chrome exercise.** Ran a temporary Playwright probe with `python ../.f3b-chrome.py` against the production bundle and an isolated mock in desktop Chrome 158.0.8127.88, headless with muting disabled. Cleared the unrelated seed alert and seed SOS first. Signed in as police, armed from the queue, advanced the Main Gate ramp through WARNING and CRITICAL, acknowledged from the banner, waited 11 seconds and reloaded. Chrome produced nonzero audio waveforms for the arming tone, warning chime and critical siren. The banner disappeared, no fourth burst started, and reload showed the not-armed chip with zero audio bursts. No uncaught page errors. Earlier probe attempts hit a temporary-path mismatch and short-tone sampling timeouts. The passing run used a longer sample window.
+
+**Human listening sign-off.** Person B verified in desktop Chrome/Edge with laptop volume up that the arming tone, warning chime and critical two-tone siren were clearly audible. Acknowledging silenced the siren immediately, and reloading required arming again. Android vibration and iPhone Safari will be tested on physical devices during M5. No new dependencies or contract changes.
+
 ## F3a — Police dashboard, alert queue and alert detail
 
 Police and admins can monitor live zones, filter and paginate alerts, open timelines, and acknowledge, respond or resolve with an optional note. The dashboard shows zone thresholds, trend, source availability and the age of the last live reading. Socket events update zone and alert caches and maintain up to 300 live samples per zone. Alert writes update visible lists immediately, roll back on failure and refetch after a conflict. The arming chip is a preview. Monitor, reports and zone live view retain their placeholder routes.

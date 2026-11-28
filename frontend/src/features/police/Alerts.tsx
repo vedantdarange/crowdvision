@@ -105,27 +105,25 @@ export function useAlertDialog() {
     ),
   };
 }
-function ActionDialog({
-  selection,
-  close,
-}: {
-  selection: Selection;
-  close: () => void;
-}) {
-  const { alert, action, trigger } = selection;
+export function useAlertAction() {
   const client = useQueryClient();
   const generation = useRef(useSession.getState().generation).current;
   const sameSession = () => generation === useSession.getState().generation;
-  const [note, setNote] = useState('');
-  const user = useSession((s) => s.user);
-  const delay = useDelay(action === 'resolve' && user?.role === 'admin');
-  const mutation = useMutation({
-    mutationFn: () =>
+  return useMutation({
+    mutationFn: ({
+      alert,
+      action,
+      note = '',
+    }: {
+      alert: Alert;
+      action: Action;
+      note?: string;
+    }) =>
       apiClient<ApiOne<Alert>>('/alerts/' + alert.id + '/' + action, {
         method: 'POST',
         body: note.trim() ? { note: note.trim() } : {},
       }),
-    onMutate: async () => {
+    onMutate: async ({ alert, action }) => {
       await client.cancelQueries({ queryKey: ['alerts'] });
       const before =
         client.getQueryData<AlertDetail>(k.alertDetail(alert.id)) ?? alert;
@@ -145,7 +143,7 @@ function ActionDialog({
         })),
       };
     },
-    onError: (error, _vars, snapshot) => {
+    onError: (error, { alert }, snapshot) => {
       if (!sameSession()) return;
       if (
         snapshot &&
@@ -173,9 +171,21 @@ function ActionDialog({
     onSettled: () => {
       if (sameSession())
         void client.invalidateQueries({ queryKey: ['alerts'] });
-      close();
     },
   });
+}
+function ActionDialog({
+  selection,
+  close,
+}: {
+  selection: Selection;
+  close: () => void;
+}) {
+  const { alert, action, trigger } = selection;
+  const [note, setNote] = useState('');
+  const user = useSession((s) => s.user);
+  const delay = useDelay(action === 'resolve' && user?.role === 'admin');
+  const mutation = useAlertAction();
   return (
     <Dialog
       open
@@ -207,7 +217,8 @@ function ActionDialog({
           className="grid gap-3"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!mutation.isPending) mutation.mutate();
+            if (!mutation.isPending)
+              mutation.mutate({ alert, action, note }, { onSettled: close });
           }}
         >
           <label>

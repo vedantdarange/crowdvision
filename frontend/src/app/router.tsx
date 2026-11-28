@@ -1,7 +1,6 @@
 import { createBrowserRouter, type RouteObject } from 'react-router';
 import { PublicLayout } from './layouts/PublicLayout';
 import { PoliceLayout } from './layouts/PoliceLayout';
-import { AdminLayout } from './layouts/AdminLayout';
 import { AuthLayout } from './layouts/AuthLayout';
 import { AccessPage } from '@/features/auth/AccessPage';
 import { RequireRole } from '@/features/auth';
@@ -98,11 +97,7 @@ export const routes: RouteObject[] = [
   },
   {
     handle: { role: 'police' },
-    element: (
-      <RequireRole role="police">
-        <PoliceLayout />
-      </RequireRole>
-    ),
+    element: <PoliceLayout />,
     children: [
       {
         ...page('/police', 'Operations dashboard', 'F3'),
@@ -126,24 +121,19 @@ export const routes: RouteObject[] = [
       page('/police/monitor', 'Camera control', 'F4'),
       page('/police/reports', 'Report review', 'F6'),
       page('/police/advisories', 'Broadcast advisory', 'F6'),
-    ],
-  },
-  {
-    handle: { role: 'admin' },
-    element: (
-      <RequireRole role="admin">
-        <AdminLayout />
-      </RequireRole>
-    ),
-    children: [
-      page('/admin/zones', 'Zones', 'F7'),
-      page('/admin/zones/new', 'New zone', 'F7'),
-      page('/admin/zones/:id/edit', 'Edit zone', 'F7'),
-      page('/admin/sources', 'Sources', 'F7'),
-      page('/admin/users', 'Users', 'F7'),
-      page('/admin/settings', 'Settings', 'F7'),
-      page('/admin/analytics', 'Analytics', 'F7'),
-      page('/admin/audit', 'Audit log', 'F7'),
+      {
+        handle: { role: 'admin' },
+        children: [
+          page('/admin/zones', 'Zones', 'F7'),
+          page('/admin/zones/new', 'New zone', 'F7'),
+          page('/admin/zones/:id/edit', 'Edit zone', 'F7'),
+          page('/admin/sources', 'Sources', 'F7'),
+          page('/admin/users', 'Users', 'F7'),
+          page('/admin/settings', 'Settings', 'F7'),
+          page('/admin/analytics', 'Analytics', 'F7'),
+          page('/admin/audit', 'Audit log', 'F7'),
+        ],
+      },
     ],
   },
 ];
