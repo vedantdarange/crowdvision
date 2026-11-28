@@ -129,6 +129,14 @@ function matches(a: Alert, f: Filters) {
   );
 }
 export function updateAlert(client: QueryClient, a: Alert, refresh = true) {
+  client.setQueriesData<Alert[]>(
+    { queryKey: ['alerts', 'banner'], exact: true },
+    (old = []) => {
+      const rows = old.filter((row) => row.id !== a.id);
+      if (a.status === 'NEW') rows.push(a);
+      return rows;
+    },
+  );
   const detailKey = k.alertDetail(a.id);
   const previous = client.getQueryData<AlertDetail>(detailKey);
   for (const [key, page] of client.getQueriesData<ApiList<Alert>>({
@@ -173,7 +181,9 @@ export function updateAlert(client: QueryClient, a: Alert, refresh = true) {
     void client.invalidateQueries({
       queryKey: ['alerts'],
       predicate: (q) =>
-        typeof q.queryKey[1] === 'object' || q.queryKey[2] === a.id,
+        typeof q.queryKey[1] === 'object' ||
+        q.queryKey[1] === 'banner' ||
+        q.queryKey[2] === a.id,
     });
   }
 }
