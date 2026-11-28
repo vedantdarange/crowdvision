@@ -18,3 +18,4 @@ frontend/dist/
 # Model weights & evaluation datasets (large files)
 *.pt
 eval/data/
+crowd-photos-testing/

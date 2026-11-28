@@ -1,47 +1,44 @@
 # Backend status — updated 2026-11-28
-## Phase: B6 (done — audit fixes verified, ready to commit)
+## Phase: B7 (fixes verified — ready to commit)
 ## Done since last update
-- Implemented Phase B6 (M5 — Web Push and reminders) + all 4 audit fixes on branch `be/b6-web-push`:
-  - **`requirements.txt` & local `.env`**:
-    - Installed and pinned `pywebpush==2.5.0` and `py-vapid==1.9.6` (`pip check` clean).
-    - Configured local git-ignored `backend/.env` with generated VAPID keypair and `VAPID_SUBJECT=mailto:vedmodzyt@gmail.com`.
-  - **`app/push/notifier.py`**:
-    - Implemented contract §9 payload builders `build_alert_payload()` (supports both `DENSITY` and `COUNT` zones, title `"<LEVEL> — <Zone>"`, `/police/alerts/{id}`, `alert-{id}`) and `build_sos_payload()` (`/police/reports?focus={id}`, `sos-{id}`, `CRITICAL`, filtering strictly to `CRUSH_RISK`, `FIRE`, and `MEDICAL` while leaving `LOST_CHILD` and `OTHER` in-app only).
-    - Implemented `WebPushNotifier` implementing `Notifier` (`notify_alert`, `notify_sos`, `send_test`) and wired into `Container` (`app/container.py` + `app/__init__.py` start/`atexit` stop).
-    - Alert and SOS dispatches enqueue non-blockingly after commit onto a bounded background queue (`maxsize=64`) executed in a dedicated daemon thread inside `flask_app.app_context()`, so `DetectionManager._pump_loop` and the 1 Hz background loop never stall on slow push endpoints; queue overflows drop the newest item, increment `dropped_count`, and log a warning without secrets or endpoints. `POST /push/test` (`send_test`) remains synchronous to return `{sent}`.
-    - Uses shared `resolve_push_config()` rule for both `WebPushNotifier` and `GET /api/v1/config`: blank keys or invalid `VAPID_SUBJECT` keep the backend running, disable push (`is_configured=False`, `vapid_public_key: null`), and log a concise warning without keys.
-    - Builds a **fresh** `vapid_claims = {"sub": ...}` dict on every `webpush()` call, sets `ttl=600`, `headers={"Urgency": "high"}`, and per-request `timeout=5.0`, delivers concurrently via `ThreadPoolExecutor`, and never logs full endpoint URLs or keys.
-    - Extended `FakeNotifier` with matching `notify_sos` filtering and `send_test` recording.
-  - **`app/models/models.py`, `migrations/versions/a4c8e2f19b30_add_push_subscription_revision.py`, `app/repositories/push_repo.py`, `app/api/v1/push.py`, `app/services/settings_service.py`**:
-    - Added `PushSubscription.revision` + Alembic migration `a4c8e2f19b30` (upgraded cleanly `71a56dd5987e -> a4c8e2f19b30`). `upsert()` increments `revision` on re-registration; `record_delivery_results()` applies `ok`/`gone` (`404`/`410` delete)/`fail` (`5` consecutive failures delete) outcomes atomically via SQL `WHERE id = :id AND revision = :rev` so stale delayed outcomes never corrupt refreshed subscriptions.
-    - Added `/api/v1/push/subscriptions` (`POST` upsert by `endpoint`, `DELETE ?endpoint=` using `request.args` directly without double `unquote`) and `POST /api/v1/push/test` (`200 {data: {sent}}`), restricted to active `police`/`admin` users; broadcasts filter to active (`is_active=True`) `police`/`admin` users.
-    - Updated `GET /api/v1/config` (`RuntimeConfig.vapid_public_key`) using `resolve_push_config()` so `/config` and `WebPushNotifier` always agree.
-  - **`docs/DEMO.md`**:
-    - Added manual M5 Web Push verification checklist for locked Android Chrome via `cloudflared` HTTPS tunnel + Person B's F5 push UI.
+- Implemented Phase B7 (M6 — Citizen reports, privacy-preserving RAM upload, rate limiting, and retention) on `be/b7-citizen-reports` (branched from committed B6 `4e10e44`):
+  - **`app/schemas/reports.py`, `app/schemas/serializers.py`, `app/repositories/report_repo.py`**:
+    - Added `CrowdReportFormSchema`, `SosReportCreateRequest`, `ReportReviewRequest`, `serialize_report()` matching contract §5 & fixtures, and `ReportRepository` (`list_mine`, `list_filtered`, `delete_older_than`, and atomic `claim_review()` `WHERE id = :id AND status = 'PENDING'`).
+  - **`app/services/report_service.py`, `app/api/v1/reports.py`, `app/detection/manager.py`**:
+    - `POST /api/v1/reports/crowd` (`citizen+`): validates `multipart/form-data`, JPEG/PNG MIME + magic bytes, `MAX_CONTENT_LENGTH` 5 MiB (`5,242,880` B) total multipart request cap (`413 PAYLOAD_TOO_LARGE` / `422 VALIDATION_ERROR`), finite `lat`/`lng` (`-90..90` / `-180..180`), reads upload strictly in RAM via `MemoryRequest`, runs synchronous single-frame `DetectionManager.detect_once()` (`503 DETECTOR_UNAVAILABLE` when down/full/timed out; `422` on `BAD_IMAGE`), discards bytes immediately, matches GPS via `shapely` (`shape(geom).contains(Point(lng, lat))`) for `zone_id` & `density_hint`, and emits `report:new` to `role:police` after commit.
+    - `POST /api/v1/reports/sos` (`citizen+`): validates `SosType`, matches GPS to active zone, persists `PENDING` SOS, emits `report:new` to `role:police`, and calls `notifier.notify_sos()` post-commit (`CRUSH_RISK`/`FIRE`/`MEDICAL` only; `LOST_CHILD`/`OTHER` in-app only).
+    - `GET /reports/mine` (`citizen+`), `GET /reports` (`police+` with `kind`/`status`/`zone_id`/pagination), and atomic `PATCH /reports/{id}` (`police+`): `ReportService.review()` claims `PENDING -> VERIFIED|DISMISSED` atomically via `claim_review()`, saves winning decision + reviewer + timestamp + note + `REPORT_REVIEWED` audit entry in one transaction, commits before emitting `report:updated` once per unique connected socket (`to=["role:police", f"user:{owner}"]` deduplicating overlapping rooms), preserves `404` on missing reports, and returns `409 INVALID_TRANSITION` if already reviewed.
+    - Per-user rate limiting via `_user_rate_limit_key()` (`user:{id}` from JWT identity): `1/minute` on `/reports/crowd` and `3 per 10 minutes` on `/reports/sos` returning `429 RATE_LIMITED`.
+  - **`app/extensions.py`, `app/__init__.py`, `tests/conftest.py`**:
+    - Fixed multi-app `RATELIMIT_ENABLED` isolation in `create_app()` (`RATELIMIT_ENABLED=True` default + `@limiter.request_filter` checking per-app `current_app.config["RATELIMIT_ENABLED"]`, avoiding storage wipes or singleton `limiter.enabled = False` leakage when sibling apps disable limits in the same process).
+  - **`app/realtime/tasks.py`, `backend/README.md`, `.gitignore`**:
+    - Extended hourly retention job to delete `reports` older than `REPORT_RETENTION_DAYS` (`30` days default) alongside `zone_samples` (> 7 days).
+    - Documented RAM-only upload handling, 5 MiB (`5,242,880` B) total `multipart/form-data` `MAX_CONTENT_LENGTH` request cap, and `REPORT_RETENTION_DAYS` deletion policy in [backend/README.md](file:///d:/crowdvision/backend/README.md); excluded `crowd-photos-testing/` in `.gitignore`.
   - **Tests**:
-    - Added [tests/unit/test_push.py](file:///d:/crowdvision/backend/tests/unit/test_push.py) (13 tests: Alert & SOS payloads in `DENSITY`/`COUNT`, `LOST_CHILD`/`OTHER` exclusion, shared `resolve_push_config`/`mailto:` validation without key leaks, `FakeClock` + `FakeNotifier` cooldown/CRITICAL/escalation/reminder rules, fresh `vapid_claims` per call, log secret redaction, non-blocking failed/410 delivery).
-    - Added [tests/integration/test_push.py](file:///d:/crowdvision/backend/tests/integration/test_push.py) (11 tests: RBAC + upsert + delete, encoded `%2B`/`%3D` unsubscribe owner-only, `/config` + notifier consistency on blank keys & invalid `VAPID_SUBJECT`, `/push/test` caller-scoped count, HTTP `410` delete, `5`-failure delete & success reset, stale delayed `410` vs same-row re-registration revision protection, disabled user exclusion, end-to-end `AlertService.apply` cooldown/CRITICAL/REOPENED/ESCALATED/REMINDER, and held-transport non-blocking pump/2nd-frame/tick-loop + full-queue overflow tests).
-    - Extended [tests/integration/test_role_matrix.py](file:///d:/crowdvision/backend/tests/integration/test_role_matrix.py) with the 3 `/push/*` endpoints (`35` parametrized RBAC assertions total).
-    - Focused B6/config/RBAC check (`tests/unit/test_push.py`, `tests/integration/test_push.py`, `tests/integration/test_config.py`, `tests/integration/test_role_matrix.py`): **`67 passed in 16.59s`**.
-    - Full backend suite (`tests/`): **`264 passed, 1 skipped in 136.21s`** (`1` skipped: `test_journal_mode_wal` on `:memory:` SQLite, covered by `test_journal_mode_wal_on_file_db`).
+    - Added [tests/integration/test_reports.py](file:///d:/crowdvision/backend/tests/integration/test_reports.py) (14 tests: inside/outside zone GPS matching, `report:new`/`report:updated` room isolation, single-delivery `report:updated` on overlapping `role:police` + `user:{id}` self-review socket, `> 500 KB` upload zero-temp-file verification, exact `5,242,880` B vs `5,242,881` B multipart boundary + 5 MiB raw file `413`, `422` validation, `503` worker down & queue full, late timed-out result discarded before next crowd report, real `crowd-photos-testing` photo with `ultralytics`, `SOS` `FIRE`/`CRUSH_RISK`/`MEDICAL` vs `OTHER`/`LOST_CHILD` `FakeNotifier` filtering, double-review `409`, post-claim rollback & retry, deterministic synchronized concurrent two-officer `VERIFIED`/`DISMISSED` race on file-backed SQLite DB, engine/alert isolation, `FakeClock` retention purge, per-user rate limits across IPs).
+    - Extended [tests/integration/test_rate_limit.py](file:///d:/crowdvision/backend/tests/integration/test_rate_limit.py) (4 tests) with `test_create_app_rate_limit_isolation_across_both_orders` (`disabled_first` and `default_first` HTTP `/api/v1/reports/sos` verification).
+    - Extended [tests/integration/test_role_matrix.py](file:///d:/crowdvision/backend/tests/integration/test_role_matrix.py) with all 5 `/reports/*` endpoints (`40` parametrized RBAC routes).
+    - Focused reports suite (`tests/integration/test_reports.py`): **`14 passed in 46.30s`**.
+    - Full backend suite (`.\.venv\Scripts\python.exe -m pytest tests/ -v --tb=short`): **`285 passed, 1 skipped in 208.45s`** (`1` expected skip: `test_journal_mode_wal` on `:memory:` SQLite, covered by `test_journal_mode_wal_on_file_db`).
+    - Verified all 8 JPEG images in `crowd-photos-testing/` via `POST /api/v1/reports/crowd` on `backend/.venv-gpu` (`people_model.pt`, RTX 4060): all `8` returned `HTTP 201` with `8` `report:new` events delivered to the police Socket.IO client.
 
 ## In progress
-- None (Phase B6 audit fixes complete on `be/b6-web-push`; awaiting manual Android Chrome + HTTPS tunnel push verification).
+- None (Phase B7 fixes verified on `be/b7-citizen-reports`; ready to commit before starting B8).
 
 ## Blocked / questions for Person A
 - None.
 
 ## Requests for AI-B (frontend)
-- Ready for F5 integration: `GET /api/v1/config` exposes `vapid_public_key`, and `/api/v1/push/subscriptions` (`POST`/`DELETE`) + `POST /api/v1/push/test` are live with contract §9 payloads.
+- Ready for F5 & F6 integration: Web Push (`GET /config` `vapid_public_key`, `/push/*`) and Citizen Reports (`/reports/crowd`, `/reports/sos`, `/reports/mine`, `/reports`, `PATCH /reports/{id}`, `report:new`, `report:updated`) are live per shared contract (`POST /reports/crowd` enforces a 5 MiB total multipart request cap via `MAX_CONTENT_LENGTH`).
 
 ## Untested / known issues
 - Locked Android Chrome manual test (`docs/DEMO.md`) via `cloudflared` HTTPS tunnel + Person B's F5 push screen has not yet been run (all `pywebpush` HTTP calls in automated tests used mocked `webpush` transport).
 - Browser capture-to-result latency (joint frontend webcam stream + Person B's monitor screen) remains pending Person B's monitor test.
-- Carried over: retention cleanup of citizen reports (`B7`), `flask set-password` failure paths, `trackers` real wheel installation (`USE_TRACKER=false` default), and `test_journal_mode_wal` on `:memory:` SQLite.
+- Carried over: `flask set-password` failure paths, `trackers` real wheel installation (`USE_TRACKER=false` default), and `test_journal_mode_wal` on `:memory:` SQLite.
 
 ## Next 3 steps
-1. Run manual Android Chrome + `cloudflared` HTTPS tunnel Web Push test (`docs/DEMO.md`) and joint webcam/monitor latency check with Person B.
-2. Begin Phase B7 (M6): Citizen reports (`/reports/crowd`, `/reports/sos`, `/reports`, `PATCH /reports/{id}`, memory-only upload, SOS `notify_sos` hook, rate limits, retention).
+1. Commit Phase B7 changes on `be/b7-citizen-reports` (leaving `frontend/package.json` and `crowd-photos-testing/` out).
+2. Run manual Android Chrome + `cloudflared` HTTPS tunnel Web Push test (`docs/DEMO.md`) and joint webcam/monitor test with Person B.
 3. Begin Phase B8 (M7): Analytics summary & CSV export, startup default-password check, `/audit-logs`, and demo static serving (`SERVE_FRONTEND=true`).
 
 ## Numbers (latency, MAE, coverage) once available

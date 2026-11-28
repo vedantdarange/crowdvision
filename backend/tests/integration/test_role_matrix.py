@@ -11,7 +11,9 @@ As new routes are added in B5+, append them to ROUTE_MATRIX.
 """
 from __future__ import annotations
 
+import io
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -108,6 +110,17 @@ ROUTE_MATRIX: list[tuple[str, str, str, dict[str, Any] | None]] = [
     ),
     ("DELETE", "/api/v1/push/subscriptions?endpoint=https%3A%2F%2Fpush.example.com%2Fsub%2Frm", "police", None),
     ("POST", "/api/v1/push/test", "police", None),
+    # --- B7 Citizen Reports ---
+    ("POST", "/api/v1/reports/crowd", "citizen", None),
+    (
+        "POST",
+        "/api/v1/reports/sos",
+        "citizen",
+        {"sos_type": "MEDICAL", "lat": 28.6141, "lng": 77.2092, "note": "Need medic"},
+    ),
+    ("GET", "/api/v1/reports/mine", "citizen", None),
+    ("GET", "/api/v1/reports", "police", None),
+    ("PATCH", "/api/v1/reports/{report_id}", "police", {"status": "VERIFIED", "review_note": "ok"}),
 ]
 
 _ALLOWED_ROLES = {
@@ -124,8 +137,9 @@ def test_route_role_matrix(
     from flask_jwt_extended import create_refresh_token
 
     from app.core.time import utcnow
+    from app.detection.protocol import DetectResult
     from app.extensions import db
-    from app.models.models import Advisory, AlertModel
+    from app.models.models import Advisory, AlertModel, Report
 
     citizen = make_user(
         name="Cit", email="citizen@test.local", password="Password@123", role="citizen"
@@ -144,6 +158,7 @@ def test_route_role_matrix(
     source_id = 1
     alert_id = 1
     advisory_id = 1
+    report_id = 1
 
     needs_zone = (
         "{zone_id}" in path_tpl
@@ -154,6 +169,7 @@ def test_route_role_matrix(
     needs_source = "{source_id}" in path_tpl
     needs_alert = "{alert_id}" in path_tpl
     needs_advisory = "{advisory_id}" in path_tpl
+    needs_report = "{report_id}" in path_tpl
 
     if needs_zone:
         r_z = client.post(
@@ -206,12 +222,31 @@ def test_route_role_matrix(
             db.session.commit()
             advisory_id = adv.id
 
+    if needs_report:
+        with app.app_context():
+            now_naive = utcnow().replace(tzinfo=None)
+            rep = Report(  # pyrefly: ignore[unexpected-keyword]
+                kind="SOS",
+                status="PENDING",
+                zone_id=None,
+                lat=28.6141,
+                lng=77.2092,
+                sos_type="MEDICAL",
+                note="RM report",
+                created_by=citizen.id,
+                created_at=now_naive,
+            )
+            db.session.add(rep)
+            db.session.commit()
+            report_id = rep.id
+
     path = path_tpl.format(
         target_id=target.id,
         zone_id=zone_id,
         source_id=source_id,
         alert_id=alert_id,
         advisory_id=advisory_id,
+        report_id=report_id,
     )
     resolved_body = dict(body) if body is not None else None
     if resolved_body and resolved_body.get("zone_id") == "{zone_id}":
@@ -238,7 +273,17 @@ def test_route_role_matrix(
         assert r_ok.status_code == 200
         return
 
-    r_unauth = client.open(path, method=method, json=resolved_body)
+    is_crowd_multipart = method == "POST" and path == "/api/v1/reports/crowd"
+    _jpeg_stub = b"\xff\xd8\xff\xe0" + b"\x00" * 32
+
+    if is_crowd_multipart:
+        r_unauth = client.post(
+            path,
+            data={"lat": "28.6141", "lng": "77.2092", "image": (io.BytesIO(_jpeg_stub), "c.jpg")},
+            content_type="multipart/form-data",
+        )
+    else:
+        r_unauth = client.open(path, method=method, json=resolved_body)
     assert r_unauth.status_code == 401, f"{method} {path} no token: {r_unauth.status_code}"
     assert r_unauth.get_json()["error"]["code"] == "UNAUTHENTICATED"
 
@@ -258,12 +303,41 @@ def test_route_role_matrix(
                 if adv_row is not None:
                     adv_row.is_active = True
                     db.session.commit()
-        resp = client.open(
-            path,
-            method=method,
-            headers={"Authorization": f"Bearer {tok}"},
-            json=req_body,
-        )
+        # Reset report back to PENDING between police & admin PATCH calls so both 200
+        if method == "PATCH" and "/reports/" in path and role_name == "admin":
+            with app.app_context():
+                rep_row = db.session.get(Report, report_id)
+                if rep_row is not None:
+                    rep_row.status = "PENDING"
+                    rep_row.reviewed_by = None
+                    rep_row.reviewed_at = None
+                    db.session.commit()
+        if is_crowd_multipart:
+            fake_res = DetectResult(
+                source_id=-1, seq=1, ok=True, error=None, count=2, boxes=[], infer_ms=1.0, request_id=1
+            )
+            with patch.object(
+                app.extensions["container"].detection_manager,
+                "detect_once",
+                return_value=fake_res,
+            ):
+                resp = client.post(
+                    path,
+                    headers={"Authorization": f"Bearer {tok}"},
+                    data={
+                        "lat": "28.6141",
+                        "lng": "77.2092",
+                        "image": (io.BytesIO(_jpeg_stub), "c.jpg"),
+                    },
+                    content_type="multipart/form-data",
+                )
+        else:
+            resp = client.open(
+                path,
+                method=method,
+                headers={"Authorization": f"Bearer {tok}"},
+                json=req_body,
+            )
         if role_name in allowed:
             assert resp.status_code in (200, 201, 204), (
                 f"{method} {path} as {role_name}: expected success, got {resp.status_code} {resp.get_json()}"

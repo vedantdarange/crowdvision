@@ -64,6 +64,12 @@ flask fake-feed --zone 1 --profile ramp --serve
 python scripts/fake_feed.py --zone 1 --profile ramp
 ```
 
+## Privacy, Upload Limits & Retention
+
+- Live frames and citizen crowd photos (`POST /api/v1/reports/crowd`) are processed strictly in RAM (`MemoryRequest` overrides Werkzeug's upload stream factory so parts > 500 KB never spool to temporary files on disk) and image bytes are discarded immediately after single-frame inference.
+- `MAX_CONTENT_LENGTH` caps `POST /api/v1/reports/crowd` at **5 MiB (5,242,880 bytes) for the entire `multipart/form-data` HTTP request** (including multipart boundaries, part headers, and `lat`/`lng`/`note` form fields). Any request exceeding 5 MiB total returns `413 PAYLOAD_TOO_LARGE`, so an image plus multipart framing must fit within 5,242,880 bytes (e.g. a 5,000,000-byte decimal 5 MB image fits easily, whereas a raw 5,242,880-byte file plus headers exceeds the total cap).
+- Database `reports` rows store only derived counts, coordinates, optional notes, and reporter IDs (never images). The hourly background task automatically deletes `reports` older than `REPORT_RETENTION_DAYS` (default `30` days) and `zone_samples` older than `7` days.
+
 ## Running Tests
 
 ```powershell
