@@ -16,7 +16,7 @@ import platform
 import sys
 import time
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -137,7 +137,7 @@ def _default_model_path() -> str:
     return "docs/model/best.pt"
 
 
-def run_benchmark(args: argparse.Namespace) -> int:
+def _run_frame_latency(args: argparse.Namespace) -> int:
     # Configure environment before importing Flask app
     os.environ["FLASK_ENV"] = "testing"
     os.environ["DATABASE_URL"] = "sqlite:///:memory:"
@@ -366,10 +366,233 @@ def run_benchmark(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_alert_latency_benchmark(args: argparse.Namespace) -> int:
+    """Measure alert latency from metric crossing threshold to `alert:new` at police Socket.IO client."""
+    os.environ["FLASK_ENV"] = "testing"
+    os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+    os.environ["DETECTOR_BACKEND"] = str(args.backend)
+    os.environ["MODEL_PATH"] = str(args.model)
+    os.environ["USE_TRACKER"] = "true" if args.use_tracker else "false"
+
+    from argon2 import PasswordHasher
+    from flask_jwt_extended import create_access_token
+    from flask_socketio import SocketIOTestClient
+
+    from app import create_app
+    from app.extensions import db, socketio
+    from app.models.models import User
+
+    flask_app = create_app(
+        {
+            "TESTING": True,
+            "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
+            "RATELIMIT_ENABLED": False,
+        }
+    )
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    with flask_app.app_context():
+        db.create_all()
+        ph = PasswordHasher()
+        admin = User(
+            name="Alert Admin",
+            email="alert_admin@test.local",
+            password_hash=ph.hash("EvalPass@123"),
+            role="admin",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        police = User(
+            name="Alert Police",
+            email="alert_police@test.local",
+            password_hash=ph.hash("EvalPass@123"),
+            role="police",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        db.session.add_all([admin, police])
+        db.session.commit()
+        admin_tok = create_access_token(identity=str(admin.id), additional_claims={"role": "admin"})
+        police_tok = create_access_token(identity=str(police.id), additional_claims={"role": "police"})
+
+    client = flask_app.test_client()
+    headers = {"Authorization": f"Bearer {admin_tok}"}
+    client.patch(
+        "/api/v1/settings",
+        json={
+            "detect_conf": args.conf,
+            "frame_width": args.imgsz,
+            "smoothing_window": 1,
+            "debounce_s": 0,
+            "clear_s": 0,
+        },
+        headers=headers,
+    )
+
+    container = flask_app.extensions["container"]
+    manager = container.detection_manager
+    manager.start(flask_app)
+    if not manager.wait_until_ready(timeout=20.0):
+        manager.stop(timeout=3.0)
+        raise RuntimeError("Detection worker failed to become ready within 20s.")
+
+    police_sio = SocketIOTestClient(flask_app, socketio, auth={"token": police_tok})
+    admin_sio = SocketIOTestClient(flask_app, socketio, auth={"token": admin_tok})
+    police_sio.get_received()
+    admin_sio.get_received()
+
+    trials = max(1, int(args.alert_trials))
+    dispatch_latencies_ms: list[float] = []
+    frame_to_alert_ms: list[float] = []
+
+    try:
+        # 1. Scripted threshold-crossing alert dispatch latency across distinct zones
+        with flask_app.app_context():
+            t_clock = datetime.now(timezone.utc)
+        for i in range(1, trials + 1):
+            z_resp = client.post(
+                "/api/v1/zones",
+                json={
+                    "name": f"Alert Latency Zone {i}",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[77.209, 28.6139], [77.2094, 28.6139], [77.2094, 28.6143], [77.209, 28.6143], [77.209, 28.6139]]],
+                    },
+                    "mode": "COUNT",
+                    "warning_count": 5,
+                    "critical_count": 10,
+                },
+                headers=headers,
+            )
+            zid = z_resp.get_json()["data"]["id"]
+            s_resp = client.post(
+                "/api/v1/sources",
+                json={"zone_id": zid, "name": f"Alert Cam {i}", "kind": "VIDEO_FILE"},
+                headers=headers,
+            )
+            sid_src = s_resp.get_json()["data"]["id"]
+
+            with flask_app.app_context():
+                # Establish baseline NORMAL state
+                manager.ingest_count(sid_src, count=1, now=t_clock + timedelta(seconds=i * 10))
+                police_sio.get_received()
+
+                t0 = time.perf_counter()
+                manager.ingest_count(sid_src, count=8, now=t_clock + timedelta(seconds=i * 10 + 1))
+
+            received_alert = False
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline and not received_alert:
+                for ev in police_sio.get_received():
+                    if ev["name"] == "alert:new" and ev["args"]:
+                        if ev["args"][0].get("zone_id") == zid:
+                            received_alert = True
+                            break
+                if not received_alert:
+                    time.sleep(0.001)
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            if received_alert:
+                dispatch_latencies_ms.append(elapsed_ms)
+
+        # 2. Optional full frame:submit -> worker infer -> alert:new latency if an image exists
+        input_path = Path(args.input) if args.input else _default_input_path()
+        frames = _load_frames(input_path, 1) if input_path.exists() else []
+        if frames:
+            lbl, jpg, w, h = frames[0]
+            z_resp = client.post(
+                "/api/v1/zones",
+                json={
+                    "name": "Frame-to-Alert Zone",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[77.209, 28.6139], [77.2094, 28.6139], [77.2094, 28.6143], [77.209, 28.6143], [77.209, 28.6139]]],
+                    },
+                    "mode": "COUNT",
+                    "warning_count": 1,
+                    "critical_count": 2,
+                },
+                headers=headers,
+            )
+            fzid = z_resp.get_json()["data"]["id"]
+            s_resp = client.post(
+                "/api/v1/sources",
+                json={"zone_id": fzid, "name": "Frame Alert Cam", "kind": "VIDEO_FILE"},
+                headers=headers,
+            )
+            fsid = s_resp.get_json()["data"]["id"]
+            if args.backend == "fake":
+                manager.set_fake_count(fsid, 5)
+            police_sio.get_received()
+            t0 = time.perf_counter()
+            admin_sio.emit(
+                "frame:submit",
+                {
+                    "source_id": fsid,
+                    "seq": 1,
+                    "reset": True,
+                    "width": w,
+                    "height": h,
+                    "image": jpg,
+                },
+            )
+            got_frame_alert = False
+            deadline = time.monotonic() + float(args.timeout)
+            while time.monotonic() < deadline and not got_frame_alert:
+                for ev in police_sio.get_received():
+                    if ev["name"] == "alert:new" and ev["args"]:
+                        if ev["args"][0].get("zone_id") == fzid:
+                            got_frame_alert = True
+                            break
+                if not got_frame_alert:
+                    time.sleep(0.002)
+            if got_frame_alert:
+                frame_to_alert_ms.append((time.perf_counter() - t0) * 1000.0)
+    finally:
+        if police_sio.is_connected():
+            police_sio.disconnect()
+        if admin_sio.is_connected():
+            admin_sio.disconnect()
+        manager.stop(timeout=3.0)
+
+    print("\n=== CrowdVision Alert Delivery Latency (threshold cross -> police alert:new) ===")
+    if not dispatch_latencies_ms:
+        print("FAILED: No alert:new events received on police Socket.IO client.", file=sys.stderr)
+        return 1
+
+    s_disp = sorted(dispatch_latencies_ms)
+    print(
+        f"alert_dispatch_ms (ingest_count cross -> police alert:new, n={len(s_disp)}/{trials}): "
+        f"min={s_disp[0]:.2f} | p50={_percentile(s_disp, 50):.2f} | "
+        f"p95={_percentile(s_disp, 95):.2f} | max={s_disp[-1]:.2f}"
+    )
+    if frame_to_alert_ms:
+        print(
+            f"frame_to_alert_ms (frame:submit -> YOLO infer -> ZoneEngine -> police alert:new, n=1): "
+            f"{frame_to_alert_ms[0]:.2f} ms"
+        )
+    print("Note: Measured with debounce_s=0, smoothing_window=1 so crossing fires immediately without artificial hold delay.")
+    return 0
+
+
+def run_benchmark(args: argparse.Namespace) -> int:
+    rc = 0
+    if args.mode in ("frame", "all"):
+        rc = _run_frame_latency(args)
+        if rc != 0:
+            return rc
+    if args.mode in ("alert", "all"):
+        rc = run_alert_latency_benchmark(args)
+    return rc
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Evaluate real detection & pipeline latency.")
+    parser = argparse.ArgumentParser(description="Evaluate real detection, pipeline & alert latency.")
+    parser.add_argument("--mode", default="all", choices=["frame", "alert", "all"], help="Which latency suite to run.")
     parser.add_argument("--input", default="", help="Folder of images, single image, or video file.")
     parser.add_argument("--frames", type=int, default=20, help="Number of frames to submit.")
+    parser.add_argument("--alert-trials", type=int, default=10, help="Number of threshold-cross alert trials.")
     parser.add_argument("--model", default=_default_model_path(), help="Path to YOLO .pt model.")
     parser.add_argument("--backend", default="ultralytics", choices=["ultralytics", "fake"])
     parser.add_argument("--conf", type=float, default=0.35)

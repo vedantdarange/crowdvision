@@ -72,6 +72,17 @@ class PassThroughTracker:
         self._last_seen_s[source_id] = float(now_s)
         return list(boxes)
 
+    def prune_inactive(self, now_s: float) -> int:
+        """Drop per-source state inactive for at least *inactivity_reset_s*."""
+        stale = [
+            sid
+            for sid, ts in self._last_seen_s.items()
+            if (now_s - ts) >= self._inactivity_reset_s
+        ]
+        for sid in stale:
+            self.reset(sid)
+        return len(stale)
+
 
 class ByteTrackTrackerHook:
     """Optional per-source analytics tracker backed by `trackers.ByteTrackTracker` (2.7.x).
@@ -163,6 +174,17 @@ class ByteTrackTrackerHook:
             score = float(t_confs[idx]) if t_confs is not None else 1.0
             out.append((float(bx1), float(by1), float(bx2), float(by2), score))
         return out
+
+    def prune_inactive(self, now_s: float) -> int:
+        """Drop ByteTrack instances inactive for at least *inactivity_reset_s*."""
+        stale = [
+            sid
+            for sid, ts in self._last_seen_s.items()
+            if (now_s - ts) >= self._inactivity_reset_s
+        ]
+        for sid in stale:
+            self.reset(sid)
+        return len(stale)
 
 
 def build_tracker(
