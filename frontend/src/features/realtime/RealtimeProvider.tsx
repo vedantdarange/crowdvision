@@ -16,6 +16,7 @@ import {
   updateSource,
   useSeries,
 } from '@/features/police/data';
+import { updateReportInCache } from '@/features/reports/api';
 let started = false;
 function start() {
   if (started) return;
@@ -50,6 +51,32 @@ function start() {
   socket.on('advisory:retracted', ({ id }) => {
     updateAdvisory(queryClient, id);
     if (citizen()) toast('Advisory removed');
+  });
+  socket.on('report:new', (report) => {
+    if (citizen()) return;
+    void queryClient.invalidateQueries({
+      queryKey: ['reports'],
+      predicate: (q) => q.queryKey[1] !== 'banner',
+    });
+    if (report.kind === 'CROWD') {
+      toast(`New crowd report in ${report.zone_name ?? 'venue'}`);
+    }
+  });
+  socket.on('report:updated', (report) => {
+    updateReportInCache(queryClient, report);
+    void queryClient.invalidateQueries({
+      queryKey: ['reports'],
+      predicate: (q) => q.queryKey[1] !== 'banner',
+    });
+    const currentUser = useSession.getState().user;
+    if (
+      currentUser &&
+      report.created_by.id === currentUser.id &&
+      report.status !== 'PENDING'
+    ) {
+      const label = report.kind === 'SOS' ? 'SOS report' : 'Crowd report';
+      toast(`${label} #${report.id} ${report.status.toLowerCase()}`);
+    }
   });
   socket.on('auth:expired', () => {
     void refreshSession().catch(() => {});

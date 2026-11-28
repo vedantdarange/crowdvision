@@ -38,6 +38,7 @@ function Reading({ zone }: { zone: PublicZoneState }) {
 }
 export function LiveMap() {
   const { data: zones } = useLiveZones();
+  const { data: advisories } = useAdvisories();
   const status = useConnection((s) => s.status);
   const [selected, select] = useState<number | null>(null),
     [open, setOpen] = useState(false);
@@ -45,6 +46,9 @@ export function LiveMap() {
     select(id);
     setOpen(true);
   }
+  const latestAdvisories = [...advisories]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 2);
   return (
     <section className="space-y-4 p-4">
       <header className="flex items-center justify-between">
@@ -56,6 +60,41 @@ export function LiveMap() {
           <LevelBadge level={l} key={l} />
         ))}
       </div>
+      {latestAdvisories.length > 0 && (
+        <div
+          role="region"
+          aria-label="Active advisories"
+          className="rounded-xl border bg-card px-4 py-3"
+        >
+          <div className="mb-1 flex items-center justify-between gap-2 text-xs font-semibold uppercase tracking-wide">
+            <span>Latest advisories</span>
+            <Link className="underline" to="/advisories">
+              All advisories ({advisories.length})
+            </Link>
+          </div>
+          <ul className="space-y-1 text-sm">
+            {latestAdvisories.map((a) => {
+              const Icon = {
+                INFO: Info,
+                WARNING: TriangleAlert,
+                URGENT: OctagonAlert,
+              }[a.severity];
+              return (
+                <li key={a.id} className="flex flex-wrap items-center gap-2">
+                  <Icon size={15} aria-hidden />
+                  <strong>{a.severity}:</strong>
+                  <span>{a.title}</span>
+                  {a.zone_name && (
+                    <span className="text-muted-foreground text-xs">
+                      ({a.zone_name})
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
       <div className="relative grid min-w-0 overflow-hidden rounded-2xl border bg-card lg:grid-cols-[1fr_21rem]">
         <div className="relative isolate h-[60vh] min-w-0">
           <ErrorBoundary
