@@ -60,6 +60,8 @@ import './shell.css';
 import '@/features/police/police.css';
 import { ConnectionDot } from '@/components/status/ConnectionDot';
 import { useConnection } from '@/features/realtime/RealtimeProvider';
+import { toast } from 'sonner';
+import { InstallHint, sendTestPush } from '@/features/push';
 
 type Audience = 'public' | 'auth' | 'police' | 'admin';
 type Item = readonly [string, string, LucideIcon];
@@ -146,6 +148,24 @@ function Shell({ audience, children }: ShellProps) {
   }
   const professional = audience === 'admin' || audience === 'police';
   const { user, logout } = useSession();
+  const [sendingTestPush, setSendingTestPush] = useState(false);
+
+  async function handleSendTestPush() {
+    if (sendingTestPush) return;
+    setSendingTestPush(true);
+    try {
+      const result = await sendTestPush();
+      toast.success(
+        result.sent === 1
+          ? 'Sent test notification to 1 device.'
+          : `Sent test notification to ${result.sent} devices.`,
+      );
+    } catch {
+      toast.error('Could not send test notification.');
+    } finally {
+      setSendingTestPush(false);
+    }
+  }
   const navigate = useNavigate();
   const workspaces = spaces.filter(
     ([path]) =>
@@ -270,6 +290,16 @@ function Shell({ audience, children }: ShellProps) {
                   <DropdownMenuItem onSelect={toggle}>
                     Switch to {theme === 'dark' ? 'light' : 'dark'} mode
                   </DropdownMenuItem>
+                  {(user.role === 'police' || user.role === 'admin') && (
+                    <DropdownMenuItem
+                      disabled={sendingTestPush}
+                      onSelect={() => {
+                        void handleSendTestPush();
+                      }}
+                    >
+                      Send test notification
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
                     onSelect={() => {
                       logout();
@@ -288,6 +318,7 @@ function Shell({ audience, children }: ShellProps) {
           </div>
         </header>
         <main id="main" tabIndex={-1}>
+          <InstallHint />
           {children}
           <SuspenseBoundary>
             <Outlet />

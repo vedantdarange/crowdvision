@@ -7,6 +7,9 @@ export default defineConfig({
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
       '@contract': fileURLToPath(new URL('../contract', import.meta.url)),
+      'virtual:pwa-register': fileURLToPath(
+        new URL('./tests/mocks/pwaRegister.ts', import.meta.url),
+      ),
     },
   },
   test: {

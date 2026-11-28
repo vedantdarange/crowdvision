@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { AuthSession, User } from '@contract/types';
 import { queryClient } from '@/lib/queryClient';
+import { unsubscribePushOnLogout } from '@/features/push/pushApi';
 
 type Tokens = Pick<AuthSession, 'access_token' | 'refresh_token'>;
 const storageKey = 'cv-auth';
@@ -47,7 +48,9 @@ export const useSession = create<Session>((set, get) => ({
     set({ tokens, user, generation: get().generation + 1 });
   },
   logout: () => {
-    // F5: unsubscribe this device from push before discarding its credentials.
+    const currentToken = get().tokens?.access_token;
+    const currentRole = get().user?.role;
+    void unsubscribePushOnLogout(currentToken, currentRole);
     persist(null);
     queryClient.clear();
     set({ tokens: null, user: null, generation: get().generation + 1 });

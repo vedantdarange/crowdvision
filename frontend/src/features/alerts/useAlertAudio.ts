@@ -46,7 +46,17 @@ class AudioOutput {
   }
 }
 
-export function useAlertAudio(criticalKeys: string, warningKeys: string) {
+export interface AlertAudioOptions {
+  onPermissionResult?: (permission: NotificationPermission) => void;
+}
+
+export function useAlertAudio(
+  criticalKeys: string,
+  warningKeys: string,
+  options?: AlertAudioOptions,
+) {
+  const onPermissionResultRef = useRef(options?.onPermissionResult);
+  onPermissionResultRef.current = options?.onPermissionResult;
   const output = useRef<AudioOutput | null>(null);
   const [armed, setArmed] = useState(false);
   const [intent, setIntent] = useState(() => preference('cv-alert-armed'));
@@ -90,6 +100,7 @@ export function useAlertAudio(criticalKeys: string, warningKeys: string) {
     if (typeof Notification !== 'undefined' && Notification.requestPermission) {
       void Notification.requestPermission()
         .then((permission) => {
+          onPermissionResultRef.current?.(permission);
           if (permission === 'denied')
             setNotice('Notifications are blocked in browser settings.');
         })
