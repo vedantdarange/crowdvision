@@ -5,14 +5,34 @@ export class ApiRequestError extends Error {
   readonly status: number;
   readonly code: ErrorCode;
   readonly details?: ApiError['error']['details'];
+  readonly retryAfterSeconds?: number;
 
-  constructor(status: number, error: ApiError['error']) {
+  constructor(
+    status: number,
+    error: ApiError['error'],
+    retryAfterSeconds?: number,
+  ) {
     super(error.message);
     this.name = 'ApiRequestError';
     this.status = status;
     this.code = error.code;
     this.details = error.details;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
+}
+
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.ceil(seconds);
+  }
+  const timestamp = Date.parse(value);
+  if (Number.isFinite(timestamp)) {
+    const diff = Math.ceil((timestamp - Date.now()) / 1000);
+    return diff > 0 ? diff : undefined;
+  }
+  return undefined;
 }
 
 export interface ApiOptions extends Omit<RequestInit, 'body'> {
@@ -44,7 +64,11 @@ export async function request<T>(
   const payload: unknown = await response.json();
   if (!response.ok) {
     const error = payload as ApiError;
-    throw new ApiRequestError(response.status, error.error);
+    throw new ApiRequestError(
+      response.status,
+      error.error,
+      parseRetryAfter(response.headers.get('Retry-After')),
+    );
   }
   return payload as T;
 }

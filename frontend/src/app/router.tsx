@@ -52,24 +52,48 @@ export const routes: RouteObject[] = [
           Component: (await import('@/features/zones/PublicPages')).Help,
         }),
       },
-      ...['/report/crowd', '/report/sos', '/my-reports'].map((path, i) => ({
-        ...page(path, ['Crowd report', 'Send SOS', 'My reports'][i]!, 'F6'),
-        handle: {
-          role: 'citizen',
-          title: ['Crowd report', 'Send SOS', 'My reports'][i],
-          phase: 'F6',
-        },
+      {
+        ...page('/report/crowd', 'Crowd report', 'F6'),
+        handle: { role: 'citizen', title: 'Crowd report', phase: 'F6' },
         lazy: async () => {
-          const m = await import('./pages/PlaceholderPage');
+          const { CrowdReportPage } = await import('@/features/reports');
           return {
             Component: () => (
               <RequireRole role="citizen">
-                <m.Component />
+                <CrowdReportPage />
               </RequireRole>
             ),
           };
         },
-      })),
+      },
+      {
+        ...page('/report/sos', 'Send SOS', 'F6'),
+        handle: { role: 'citizen', title: 'Send SOS', phase: 'F6' },
+        lazy: async () => {
+          const { SosReportPage } = await import('@/features/reports');
+          return {
+            Component: () => (
+              <RequireRole role="citizen">
+                <SosReportPage />
+              </RequireRole>
+            ),
+          };
+        },
+      },
+      {
+        ...page('/my-reports', 'My reports', 'F6'),
+        handle: { role: 'citizen', title: 'My reports', phase: 'F6' },
+        lazy: async () => {
+          const { MyReportsPage } = await import('@/features/reports');
+          return {
+            Component: () => (
+              <RequireRole role="citizen">
+                <MyReportsPage />
+              </RequireRole>
+            ),
+          };
+        },
+      },
       { path: '/forbidden', element: <AccessPage /> },
       { path: '*', element: <AccessPage missing /> },
     ],
@@ -144,8 +168,19 @@ export const routes: RouteObject[] = [
             },
           ]
         : []),
-      page('/police/reports', 'Report review', 'F6'),
-      page('/police/advisories', 'Broadcast advisory', 'F6'),
+      {
+        ...page('/police/reports', 'Report review', 'F6'),
+        lazy: async () => ({
+          Component: (await import('@/features/reports')).ReportReviewPage,
+        }),
+      },
+      {
+        ...page('/police/advisories', 'Broadcast advisory', 'F6'),
+        lazy: async () => ({
+          Component: (await import('@/features/advisories'))
+            .PoliceAdvisoriesPage,
+        }),
+      },
       {
         handle: { role: 'admin' },
         children: [
