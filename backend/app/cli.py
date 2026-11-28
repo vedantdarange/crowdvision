@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import secrets
 import string
 from datetime import datetime, timezone
@@ -346,4 +347,18 @@ def register_commands(app: Flask) -> None:
 
         click.echo(f"Serving Flask+Socket.IO on http://127.0.0.1:{port} with fake-feed ({profile_norm})...")
         socketio.start_background_task(_bg)
-        socketio.run(app, host="127.0.0.1", port=port, allow_unsafe_werkzeug=True)
+        # Flask CLI sets FLASK_RUN_FROM_CLI=true, which causes app.run() inside
+        # socketio.run() to ignore the call and exit early. Temporarily clear it
+        # and disable the reloader so the command stays serving in one process.
+        prev_cli_flag = os.environ.pop("FLASK_RUN_FROM_CLI", None)
+        try:
+            socketio.run(
+                app,
+                host="127.0.0.1",
+                port=port,
+                use_reloader=False,
+                allow_unsafe_werkzeug=True,
+            )
+        finally:
+            if prev_cli_flag is not None:
+                os.environ["FLASK_RUN_FROM_CLI"] = prev_cli_flag
