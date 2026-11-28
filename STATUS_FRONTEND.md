@@ -1,5 +1,19 @@
 # Frontend status — 28 November 2026
 
+## F7b — Admin users, settings, analytics and audit (complete on mock and Flask)
+
+Implemented on `fe/f7b-admin-users-settings` after F7a merged in PR #21. The four lazy routes use the shared admin guard, loading skeletons and retry boundary. Users supports filtered pagination, staff creation, role and active-state changes, own-account protection and conflict feedback. Settings covers all 14 numeric fields with the bounds in Flask’s request validator. The two forms send numeric diffs or a changed `help_info` object independently. Analytics uses the selected range for its summary and authenticated Blob CSV download, shows response times as m:ss, and displays server-bucketed IST hours. The bar chart loads separately and has a text equivalent. Audit supports action and actor filters, pagination, event details and local absolute timestamps on hover or focus.
+
+**Verification from `frontend/`**
+
+- `npm.cmd test` passed **222/222 tests in 23 files** in 24.09 s, including 14 new F7b tests. An earlier sandboxed run had 211 passes and 10 mock integration failures from loopback EACCES. The final run had loopback access. Existing jsdom canvas/media warnings remain.
+- `npm.cmd run build`, `npm.cmd run lint`, and `npm.cmd run format:check` passed. Build includes both TypeScript checks. Vite still warns about large bundles and the service-worker bundler’s deprecated inlineDynamicImports option. `npm.cmd run check:fixtures` passed all 43 fixtures.
+- Headless Edge exercised the production build with both the fixture mock and a seeded, disposable Flask/SQLite instance. Created a police account, changed the re-raise delay (PATCH contained only `reraise_after_s`), downloaded and inspected alerts.csv, found the user/settings audit entries, and confirmed Forbidden for police on all four routes. No uncaught page errors.
+- On Flask, also changed a staff role, disabled the account and filtered by inactive, added a medical point with a help-only PATCH, and checked a populated chart and response times of 1:08 and 3:10. At 360 px all four page bodies had zero horizontal overflow and zero browser axe violations, including contrast.
+- Browser verification caught an unstable default analytics range on initial suspense. The range now persists across query retries and a delayed-response regression test covers it. Initial probe attempts also encountered isolated or occupied loopback ports, a UTF-8 BOM in the real CSV, and a navigation race in the police sign-in check. The final probes used dedicated ports, BOM-aware decoding and an explicit sign-in wait.
+
+**Handoff.** No contract changes or new project dependencies. Real-backend verification used the repository requirements in a temporary environment with synthetic records. Physical devices and screen-reader sessions were not exercised. Ready for human review. No open questions for either side.
+
 ## F7a — Admin zones and sources (done on mock, pending real-backend check)
 
 Implemented Phase F7a on `fe/f7a-admin-zones`:

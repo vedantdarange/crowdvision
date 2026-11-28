@@ -1,3 +1,9 @@
+import {
+  numericSchema,
+  helpSchema,
+  thresholdsValid,
+  thresholdIssue,
+} from '../src/features/admin/settingsSchema';
 import express from 'express';
 import cors from 'cors';
 import { z } from 'zod';
@@ -104,41 +110,9 @@ export function createApp(
     res.json({ data: state.settings }),
   );
   route('patch', '/settings', 'admin', (req, res, user) => {
-    // Validate documented relationships and basic types; no invented server-specific upper bounds.
-    const location = z.object({
-      name: z.string(),
-      lat: z.number().nullable(),
-      lng: z.number().nullable(),
-      note: z.string().nullable(),
-    });
-    const schema = z.object({
-      detect_conf: z.number().min(0).max(1).optional(),
-      smoothing_window: z.number().int().positive().optional(),
-      debounce_s: z.number().nonnegative().optional(),
-      clear_s: z.number().nonnegative().optional(),
-      hysteresis_ratio: z.number().positive().max(1).optional(),
-      cooldown_s: z.number().nonnegative().optional(),
-      escalation_s: z.number().positive().optional(),
-      stale_after_s: z.number().positive().optional(),
-      reraise_after_s: z.number().positive().optional(),
-      target_fps: z.number().positive().optional(),
-      frame_width: z.number().int().positive().optional(),
-      jpeg_quality: z.number().min(0).max(1).optional(),
-      default_warning_density: z.number().positive().optional(),
-      default_critical_density: z.number().positive().optional(),
-      help_info: z
-        .object({
-          emergency_numbers: z.array(
-            z.object({ label: z.string(), number: z.string() }),
-          ),
-          medical_points: z.array(location),
-          exits: z.array(location),
-        })
-        .optional(),
-    });
+    const schema = numericSchema.extend({ help_info: helpSchema }).partial();
     const next = { ...state.settings, ...parse(schema, req.body) };
-    if (next.default_warning_density >= next.default_critical_density)
-      fail(422, 'VALIDATION_ERROR', 'Warning must be below critical.');
+    parse(numericSchema.refine(thresholdsValid, thresholdIssue), next);
     state.settings = next;
     for (const key of [
       'target_fps',
@@ -205,6 +179,20 @@ export function createApp(
       b.values.push(a.peak_density);
       buckets.set(key, b);
     }
+    const peaks = new Map<
+      number,
+      { zone_id: number; zone_name: string; hour: number; avg_density: number }
+    >();
+    for (const { values, ...bucket } of buckets.values()) {
+      const density = average(values)!;
+      const peak = peaks.get(bucket.zone_id);
+      if (
+        !peak ||
+        density > peak.avg_density ||
+        (density === peak.avg_density && bucket.hour < peak.hour)
+      )
+        peaks.set(bucket.zone_id, { ...bucket, avg_density: density });
+    }
     res.json({
       data: {
         from,
@@ -237,10 +225,7 @@ export function createApp(
               : [],
           ),
         ),
-        peak_hours: [...buckets.values()].map(({ values, ...b }) => ({
-          ...b,
-          avg_density: average(values),
-        })),
+        peak_hours: [...peaks.values()],
         reports_by_status: Object.fromEntries(
           ['PENDING', 'VERIFIED', 'DISMISSED'].map((status) => [
             status,

@@ -38,13 +38,14 @@ function parseRetryAfter(value: string | null): number | undefined {
 export interface ApiOptions extends Omit<RequestInit, 'body'> {
   body?: unknown;
   token?: string;
+  responseType?: 'blob';
 }
 
 export async function request<T>(
   path: string,
   options: ApiOptions = {},
 ): Promise<T> {
-  const { body, token, ...init } = options;
+  const { body, token, responseType, ...init } = options;
   const headers = new Headers(init.headers);
   if (token) headers.set('Authorization', `Bearer ${token}`);
   let requestBody: BodyInit | undefined;
@@ -61,6 +62,8 @@ export async function request<T>(
     body: requestBody,
   });
   if (response.status === 204) return undefined as T;
+  if (response.ok && responseType === 'blob')
+    return (await response.blob()) as T;
   const payload: unknown = await response.json();
   if (!response.ok) {
     const error = payload as ApiError;

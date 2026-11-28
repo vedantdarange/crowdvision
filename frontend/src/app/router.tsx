@@ -210,10 +210,22 @@ export const routes: RouteObject[] = [
               Component: (await import('@/features/admin')).AdminSourcesPage,
             }),
           },
-          page('/admin/users', 'Users', 'F7'),
-          page('/admin/settings', 'Settings', 'F7'),
-          page('/admin/analytics', 'Analytics', 'F7'),
-          page('/admin/audit', 'Audit log', 'F7'),
+          {
+            ...page('/admin/users', 'Users', 'F7'),
+            lazy: () => import('@/features/admin/Users'),
+          },
+          {
+            ...page('/admin/settings', 'Settings', 'F7'),
+            lazy: () => import('@/features/admin/Settings'),
+          },
+          {
+            ...page('/admin/analytics', 'Analytics', 'F7'),
+            lazy: () => import('@/features/admin/Analytics'),
+          },
+          {
+            ...page('/admin/audit', 'Audit log', 'F7'),
+            lazy: () => import('@/features/admin/Audit'),
+          },
         ],
       },
     ],
