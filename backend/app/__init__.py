@@ -75,10 +75,13 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     flask_app.config["JWT_REFRESH_TOKEN_EXPIRES"] = 7 * 24 * 60 * 60  # 7 days
     flask_app.config["SQLALCHEMY_DATABASE_URI"] = current_settings.database_url
     flask_app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    flask_app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024          # 5 MB hard limit
+    flask_app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024          # 5 MiB hard total-request limit
+    flask_app.config["RATELIMIT_ENABLED"] = True
     flask_app.config["RATELIMIT_STORAGE_URI"] = "memory://"
     flask_app.config["RATELIMIT_REGISTER"] = current_settings.rate_limit_register
     flask_app.config["RATELIMIT_LOGIN"] = current_settings.rate_limit_login
+    flask_app.config["RATELIMIT_REPORT_CROWD"] = current_settings.rate_limit_report_crowd
+    flask_app.config["RATELIMIT_REPORT_SOS"] = current_settings.rate_limit_report_sos
 
     if config_override:
         flask_app.config.update(config_override)
@@ -117,7 +120,15 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     migrate.init_app(flask_app, db)
     jwt.init_app(flask_app)
     configure_jwt_error_loaders(jwt)
-    limiter.init_app(flask_app)
+    # Keep the shared Limiter extension active so sibling apps in the same process
+    # isolate RATELIMIT_ENABLED via app.config (checked per-request by request_filter)
+    # without wiping an already-active storage when another app disables limits.
+    app_rl_enabled = bool(flask_app.config.get("RATELIMIT_ENABLED", True))
+    if app_rl_enabled or not limiter.initialized:
+        flask_app.config["RATELIMIT_ENABLED"] = True
+        limiter.enabled = True
+        limiter.init_app(flask_app)
+        flask_app.config["RATELIMIT_ENABLED"] = app_rl_enabled
     cors.init_app(
         flask_app,
         resources={r"/api/*": {"origins": current_settings.cors_origins}},
@@ -147,6 +158,7 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     from app.api.v1.config import config_bp
     from app.api.v1.health import health_bp
     from app.api.v1.push import push_bp
+    from app.api.v1.reports import reports_bp
     from app.api.v1.sources import sources_bp
     from app.api.v1.users import users_bp
     from app.api.v1.zones import zones_bp
@@ -160,6 +172,7 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     flask_app.register_blueprint(alerts_bp, url_prefix="/api/v1")
     flask_app.register_blueprint(advisories_bp, url_prefix="/api/v1")
     flask_app.register_blueprint(push_bp, url_prefix="/api/v1")
+    flask_app.register_blueprint(reports_bp, url_prefix="/api/v1")
 
     # -----------------------------------------------------------------------
     # CLI commands

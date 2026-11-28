@@ -123,6 +123,21 @@ class RealtimeEmitter:
             namespace="/",
         )
 
+    def emit_report_new(self, report_payload: dict[str, Any]) -> None:
+        """Emit report:new strictly to police/admin room (contract §7.2)."""
+        socketio.emit("report:new", report_payload, to="role:police", namespace="/")
+
+    def emit_report_updated(
+        self, report_payload: dict[str, Any], owner_id: int
+    ) -> None:
+        """Emit report:updated once per recipient across role:police and user:{owner} (contract §7.2)."""
+        socketio.emit(
+            "report:updated",
+            report_payload,
+            to=["role:police", f"user:{owner_id}"],
+            namespace="/",
+        )
+
     def emit_frame_result(self, sid: str, payload: dict[str, Any]) -> None:
         """Emit frame:result strictly to the submitting socket sid (contract §8)."""
         socketio.emit("frame:result", payload, to=sid, namespace="/")

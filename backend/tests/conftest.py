@@ -71,9 +71,11 @@ def app_ctx(app):
 @pytest.fixture()
 def clean_db(app):
     """Reset all DB tables and in-memory engine/emitter state before and after a test."""
-    from app.extensions import db
+    from app.extensions import db, limiter
 
     def _reset_mem() -> None:
+        if getattr(limiter, "_storage", None) is not None:
+            limiter.reset()
         c = app.extensions.get("container")
         if c is not None:
             if hasattr(c, "zone_engine"):
