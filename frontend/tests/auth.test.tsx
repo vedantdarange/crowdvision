@@ -15,6 +15,20 @@ afterEach(() => {
 });
 function mount(path: string, role: Role | null = null) {
   if (role) useSession.setState({ user: { ...fixture, role } });
+  if (path === '/police/alerts')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        Response.json(
+          url.includes('/alerts')
+            ? {
+                data: [],
+                pagination: { total: 0, page: 1, limit: 10, total_pages: 0 },
+              }
+            : { data: [] },
+        ),
+      ),
+    );
   const router = createMemoryRouter(routes, { initialEntries: [path] });
   const view = render(<RouterProvider router={router} />);
   return { ...view, router };

@@ -57,6 +57,9 @@ import {
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
 import './shell.css';
+import '@/features/police/police.css';
+import { ConnectionDot } from '@/components/status/ConnectionDot';
+import { useConnection } from '@/features/realtime/RealtimeProvider';
 
 type Audience = 'public' | 'auth' | 'police' | 'admin';
 type Item = readonly [string, string, LucideIcon];
@@ -124,6 +127,7 @@ function MenuLinks({
 }
 function Shell({ audience }: { audience: Audience }) {
   const { theme, toggle } = useTheme();
+  const connection = useConnection((s) => s.status);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem('cv-sidebar') === 'compact';
@@ -238,6 +242,7 @@ function Shell({ audience }: { audience: Audience }) {
             <strong>{space}</strong>
           </span>
           <div className="top-actions">
+            {professional && <ConnectionDot state={connection} />}
             <button
               type="button"
               className="cv-tool"

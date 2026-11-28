@@ -104,9 +104,24 @@ export const routes: RouteObject[] = [
       </RequireRole>
     ),
     children: [
-      page('/police', 'Operations dashboard', 'F3'),
-      page('/police/alerts', 'Alert queue', 'F3'),
-      page('/police/alerts/:id', 'Alert detail', 'F3'),
+      {
+        ...page('/police', 'Operations dashboard', 'F3'),
+        lazy: async () => ({
+          Component: (await import('@/features/police/Dashboard')).Dashboard,
+        }),
+      },
+      {
+        ...page('/police/alerts', 'Alert queue', 'F3'),
+        lazy: async () => ({
+          Component: (await import('@/features/police/Queue')).Queue,
+        }),
+      },
+      {
+        ...page('/police/alerts/:id', 'Alert detail', 'F3'),
+        lazy: async () => ({
+          Component: (await import('@/features/police/Detail')).Detail,
+        }),
+      },
       page('/police/zones/:id', 'Zone live view', 'F4'),
       page('/police/monitor', 'Camera control', 'F4'),
       page('/police/reports', 'Report review', 'F6'),
