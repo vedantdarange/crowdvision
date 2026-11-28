@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import flask
-from flask import Flask, Response, g
+from flask import Flask, Response, g, make_response, request, send_from_directory
 from pydantic import ValidationError as PydanticValidationError
 from werkzeug.exceptions import (
     BadRequest as WerkzeugBadRequest,
@@ -22,8 +22,9 @@ from werkzeug.exceptions import (
     RequestEntityTooLarge,
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import safe_join
 
-from app.config import load_settings, normalize_sqlite_url
+from app.config import BACKEND_DIR, load_settings, normalize_sqlite_url
 from app.container import wire
 from app.core.auth import configure_jwt_error_loaders
 from app.core.errors import AppError
@@ -59,6 +60,77 @@ def _format_pydantic_details(exc: PydanticValidationError) -> dict[str, list[str
     return details
 
 
+_DEFAULT_SEED_PASSWORD = "Demo@1234"
+
+
+def _enforce_no_default_admin_passwords(flask_app: Flask) -> None:
+    """Refuse startup with SERVE_FRONTEND=true if any admin still uses the default password."""
+    from argon2 import PasswordHasher
+    from argon2.exceptions import InvalidHashError, VerifyMismatchError
+    from sqlalchemy import inspect as sa_inspect
+
+    from app.models.models import User
+
+    with flask_app.app_context():
+        inspector = sa_inspect(db.engine)
+        if not inspector.has_table("users"):
+            return
+        admins = db.session.query(User).filter(User.role == "admin").all()
+        if not admins:
+            return
+        ph = PasswordHasher()
+        insecure_emails: list[str] = []
+        for admin in admins:
+            try:
+                if ph.verify(admin.password_hash, _DEFAULT_SEED_PASSWORD):
+                    insecure_emails.append(admin.email)
+            except (VerifyMismatchError, InvalidHashError, ValueError):
+                continue
+        if insecure_emails:
+            joined = ", ".join(insecure_emails)
+            msg = (
+                f"Refusing to start with SERVE_FRONTEND=true: admin account(s) ({joined}) "
+                f"still use the default seed password ({_DEFAULT_SEED_PASSWORD}). "
+                f"Run 'flask set-password <email>' to change it, or set ALLOW_DEFAULT_PASSWORDS=true."
+            )
+            logger.error(msg)
+            raise RuntimeError(msg)
+
+
+def _try_serve_spa(flask_app: Flask, path: str) -> Response | None:
+    """Serve built frontend/dist file or SPA index.html when SERVE_FRONTEND=true."""
+    rel = path.lstrip("/")
+    if (
+        rel == "api"
+        or rel.startswith("api/")
+        or rel == "socket.io"
+        or rel.startswith("socket.io/")
+    ):
+        return None
+
+    dist_dir = Path(str(flask_app.config["FRONTEND_DIST_DIR"])).resolve()
+    if rel:
+        joined = safe_join(str(dist_dir), rel)
+        if joined is not None:
+            candidate = Path(joined)
+            if candidate.is_file():
+                resp = make_response(send_from_directory(dist_dir, rel))
+                if rel in ("sw.js", "index.html"):
+                    resp.headers["Cache-Control"] = "no-cache"
+                elif rel.startswith("assets/"):
+                    resp.headers["Cache-Control"] = (
+                        "public, max-age=31536000, immutable"
+                    )
+                return resp
+
+    index_path = dist_dir / "index.html"
+    if not index_path.is_file():
+        return None
+    resp = make_response(send_from_directory(dist_dir, "index.html"))
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     """Create and configure the Flask application."""
     current_settings = load_settings()
@@ -82,6 +154,9 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     flask_app.config["RATELIMIT_LOGIN"] = current_settings.rate_limit_login
     flask_app.config["RATELIMIT_REPORT_CROWD"] = current_settings.rate_limit_report_crowd
     flask_app.config["RATELIMIT_REPORT_SOS"] = current_settings.rate_limit_report_sos
+    flask_app.config["SERVE_FRONTEND"] = current_settings.serve_frontend
+    flask_app.config["ALLOW_DEFAULT_PASSWORDS"] = current_settings.allow_default_passwords
+    flask_app.config["FRONTEND_DIST_DIR"] = str(BACKEND_DIR.parent / "frontend" / "dist")
 
     if config_override:
         flask_app.config.update(config_override)
@@ -154,6 +229,8 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     # -----------------------------------------------------------------------
     from app.api.v1.advisories import advisories_bp
     from app.api.v1.alerts import alerts_bp
+    from app.api.v1.analytics import analytics_bp
+    from app.api.v1.audit import audit_bp
     from app.api.v1.auth import auth_bp
     from app.api.v1.config import config_bp
     from app.api.v1.health import health_bp
@@ -173,6 +250,8 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     flask_app.register_blueprint(advisories_bp, url_prefix="/api/v1")
     flask_app.register_blueprint(push_bp, url_prefix="/api/v1")
     flask_app.register_blueprint(reports_bp, url_prefix="/api/v1")
+    flask_app.register_blueprint(analytics_bp, url_prefix="/api/v1")
+    flask_app.register_blueprint(audit_bp, url_prefix="/api/v1")
 
     # -----------------------------------------------------------------------
     # CLI commands
@@ -205,16 +284,19 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
     import atexit
     import sys
 
-    _one_shot_cli = len(sys.argv) >= 2 and sys.argv[1] in (
-        "db",
-        "seed-demo",
-        "set-password",
-        "routes",
-        "shell",
-    )
+    _one_shot_cmds = {"db", "seed-demo", "set-password", "routes", "shell"}
+    _one_shot_cli = any(arg in _one_shot_cmds for arg in sys.argv[1:])
     _fake_feed_no_serve = (
-        len(sys.argv) >= 2 and sys.argv[1] == "fake-feed" and "--serve" not in sys.argv
+        "fake-feed" in sys.argv[1:] and "--serve" not in sys.argv[1:]
     )
+    if (
+        bool(flask_app.config.get("SERVE_FRONTEND", False))
+        and not bool(flask_app.config.get("ALLOW_DEFAULT_PASSWORDS", False))
+        and not _one_shot_cli
+        and not _fake_feed_no_serve
+    ):
+        _enforce_no_default_admin_passwords(flask_app)
+
     if (
         tables_ready
         and not _one_shot_cli
@@ -257,7 +339,14 @@ def create_app(config_override: dict[str, Any] | None = None) -> Flask:
         return error_response("BAD_REQUEST", "Malformed request.", status=400)
 
     @flask_app.errorhandler(WerkzeugNotFound)
-    def handle_404(_: WerkzeugNotFound) -> tuple[Response, int]:
+    def handle_404(_: WerkzeugNotFound) -> Response | tuple[Response, int]:
+        if (
+            bool(flask_app.config.get("SERVE_FRONTEND", False))
+            and request.method in ("GET", "HEAD")
+        ):
+            spa_resp = _try_serve_spa(flask_app, request.path)
+            if spa_resp is not None:
+                return spa_resp
         return error_response(
             "NOT_FOUND", "The requested resource was not found.", status=404
         )
