@@ -117,3 +117,78 @@ it.each([
   if (status === 422)
     expect(screen.getByLabelText('Email')).toHaveAccessibleDescription(message);
 });
+
+it('explicit Log out on a protected route lands on / cleanly without setting ?next=, while protected navigation preserves ?next=', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/alerts')) {
+        return Response.json({
+          data: [],
+          pagination: { total: 0, page: 1, limit: 10, total_pages: 0 },
+        });
+      }
+      if (url.includes('/advisories')) {
+        return Response.json({
+          data: [],
+          pagination: { total: 0, page: 1, limit: 10, total_pages: 0 },
+        });
+      }
+      if (url.includes('/zones/live') || url.includes('/reports')) {
+        return Response.json({
+          data: [],
+          pagination: { total: 0, page: 1, limit: 10, total_pages: 0 },
+        });
+      }
+      if (url.includes('/config')) {
+        return Response.json({
+          data: {
+            target_fps: 3,
+            frame_width: 640,
+            jpeg_quality: 0.7,
+            stale_after_s: 10,
+            vapid_public_key: null,
+            app_version: '0.0.0-test',
+            contract_version: '1.1.0',
+          },
+        });
+      }
+      return Response.json({ data: [] });
+    }),
+  );
+
+  useSession.setState({
+    user: { ...fixture, role: 'police' },
+    tokens: { access_token: 'tok-p', refresh_token: 'ref-p' },
+  });
+  const router = createMemoryRouter(routes, {
+    initialEntries: ['/police/alerts'],
+  });
+  render(<RouterProvider router={router} />);
+
+  expect(
+    await screen.findByRole('heading', { name: 'Alert queue', level: 1 }),
+  ).toBeVisible();
+
+  await userEvent.click(
+    screen.getByRole('button', { name: new RegExp('Account for', 'i') }),
+  );
+  await userEvent.click(
+    await screen.findByRole('menuitem', { name: 'Log out' }),
+  );
+
+  expect(
+    await screen.findByRole('heading', { name: 'Live map', level: 1 }),
+  ).toBeVisible();
+  expect(router.state.location.pathname).toBe('/');
+  expect(router.state.location.search).toBe('');
+
+  // Re-opening a protected route while signed out still redirects to /login?next=...
+  await router.navigate('/police/alerts');
+  expect(
+    await screen.findByRole('heading', { name: 'Sign in', level: 1 }),
+  ).toBeVisible();
+  expect(router.state.location.pathname).toBe('/login');
+  expect(router.state.location.search).toBe('?next=%2Fpolice%2Falerts');
+});

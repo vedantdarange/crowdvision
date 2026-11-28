@@ -21,6 +21,7 @@ import { AlertCenter } from '@/features/alerts/AlertCenter';
 import { useSession } from '@/features/auth';
 import {
   InstallHint,
+  PUSH_SUBSCRIBE_TIMEOUT_MS,
   isIosSafari,
   urlBase64ToUint8Array,
   useWebPush,
@@ -574,5 +575,148 @@ describe('ArmAlertsButton, logout cleanup, test notification menu, and InstallHi
       screen.getByText(/Share -> Add to Home Screen/i),
     ).toBeInTheDocument();
     expect(screen.getByText(/iOS 16\.4\+/i)).toBeInTheDocument();
+  });
+
+  it('bounds push setup wait and lets late timeout completion fail safely without registering', async () => {
+    expect(PUSH_SUBSCRIBE_TIMEOUT_MS).toBeLessThanOrEqual(10_000);
+
+    let resolveLateSub!: (sub: PushSubscription) => void;
+    const latePromise = new Promise<PushSubscription>((resolve) => {
+      resolveLateSub = resolve;
+    });
+    const globals = installPushGlobals({ permission: 'granted' });
+    globals.registration.pushManager.subscribe = vi.fn(() => latePromise);
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: 'sub-retry' } }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const { wrapper } = createQueryWrapper(SAMPLE_VAPID_KEY);
+    const { result } = renderHook(() => useWebPush(50), { wrapper });
+
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.subscribe('granted');
+    });
+
+    expect(ok).toBe(false);
+    expect(result.current.busy).toBe(false);
+    expect(result.current.canRetry).toBe(true);
+    expect(result.current.status).toBe('off');
+    expect(result.current.notice).toMatch(/timed out.*banner and siren/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    // Late completion after timeout must NOT register against the backend or turn status On.
+    await act(async () => {
+      resolveLateSub(
+        makeSubscription('https://push.example/late-after-timeout'),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.current.status).toBe('off');
+
+    // Retrying cleanly with a working subscription succeeds.
+    const workingSub = makeSubscription('https://push.example/retry-ok');
+    globals.registration.pushManager.subscribe = vi.fn(async () => workingSub);
+    let retryOk = false;
+    await act(async () => {
+      retryOk = await result.current.subscribe('granted');
+    });
+    expect(retryOk).toBe(true);
+    expect(result.current.status).toBe('on');
+    expect(result.current.canRetry).toBe(false);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('prevents a pending push subscription from registering after logout or session switch', async () => {
+    let resolvePendingSub!: (sub: PushSubscription) => void;
+    const pendingPromise = new Promise<PushSubscription>((resolve) => {
+      resolvePendingSub = resolve;
+    });
+    const orphanUnsub = vi.fn().mockResolvedValue(true);
+    const globals = installPushGlobals({ permission: 'granted' });
+    globals.registration.pushManager.subscribe = vi.fn(() => pendingPromise);
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: 'sub-wrong' } }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const { wrapper } = createQueryWrapper(SAMPLE_VAPID_KEY);
+    const { result } = renderHook(() => useWebPush(500), { wrapper });
+
+    let subPromise!: Promise<boolean>;
+    act(() => {
+      subPromise = result.current.subscribe('granted');
+    });
+    expect(result.current.busy).toBe(true);
+    await waitFor(() =>
+      expect(globals.registration.pushManager.subscribe).toHaveBeenCalledTimes(
+        1,
+      ),
+    );
+
+    // Log out before browser pushManager.subscribe resolves.
+    act(() => {
+      useSession.getState().logout();
+    });
+
+    await act(async () => {
+      resolvePendingSub(
+        makeSubscription('https://push.example/orphan', orphanUnsub),
+      );
+      await subPromise;
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.current.status).toBe('off');
+    await waitFor(() => expect(orphanUnsub).toHaveBeenCalledTimes(1));
+
+    // Also verify switching directly to a different user rejects the earlier attempt.
+    let resolveSwitched!: (sub: PushSubscription) => void;
+    const subscribeMock2 = vi.fn(
+      () =>
+        new Promise<PushSubscription>((resolve) => {
+          resolveSwitched = resolve;
+        }),
+    );
+    globals.registration.pushManager.subscribe = subscribeMock2;
+    act(() => {
+      useSession.getState().signIn({
+        access_token: 'tok-a',
+        refresh_token: 'ref-a',
+        expires_in: 900,
+        user: { ...seedUser, id: 10, role: 'police' },
+      });
+    });
+
+    let switchPromise!: Promise<boolean>;
+    act(() => {
+      switchPromise = result.current.subscribe('granted');
+    });
+    await waitFor(() => expect(subscribeMock2).toHaveBeenCalledTimes(1));
+    act(() => {
+      useSession.getState().signIn({
+        access_token: 'tok-b',
+        refresh_token: 'ref-b',
+        expires_in: 900,
+        user: { ...seedUser, id: 11, role: 'police' },
+      });
+    });
+
+    await act(async () => {
+      resolveSwitched(makeSubscription('https://push.example/stale-user-a'));
+      await switchPromise;
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.current.status).toBe('off');
   });
 });

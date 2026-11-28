@@ -5,12 +5,14 @@ import type { PushSubscriptionInput } from './vapid';
 
 export async function registerPushSubscription(
   payload: PushSubscriptionInput,
+  signal?: AbortSignal,
 ): Promise<{ id: string }> {
   const response = await apiClient<ApiOne<{ id: string }>>(
     '/push/subscriptions',
     {
       method: 'POST',
       body: payload,
+      signal,
     },
   );
   return response.data;

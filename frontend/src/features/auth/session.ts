@@ -33,27 +33,45 @@ interface Session {
   tokens: Tokens | null;
   user: User | null;
   generation: number;
+  logoutFromPath: string | null;
   signIn: (session: AuthSession) => void;
-  logout: () => void;
+  logout: (options?: { manualFrom?: string }) => void;
+  clearLogoutFromPath: () => void;
   updateAccess: (token: string) => void;
 }
 export const useSession = create<Session>((set, get) => ({
   tokens: restore(),
   user: null,
   generation: 0,
+  logoutFromPath: null,
   signIn: ({ access_token, refresh_token, user }) => {
     const tokens = { access_token, refresh_token };
     persist(tokens);
     queryClient.clear();
-    set({ tokens, user, generation: get().generation + 1 });
+    set({
+      tokens,
+      user,
+      generation: get().generation + 1,
+      logoutFromPath: null,
+    });
   },
-  logout: () => {
+  logout: (options) => {
     const currentToken = get().tokens?.access_token;
     const currentRole = get().user?.role;
     void unsubscribePushOnLogout(currentToken, currentRole);
     persist(null);
     queryClient.clear();
-    set({ tokens: null, user: null, generation: get().generation + 1 });
+    set({
+      tokens: null,
+      user: null,
+      generation: get().generation + 1,
+      logoutFromPath: options?.manualFrom ?? null,
+    });
+  },
+  clearLogoutFromPath: () => {
+    if (get().logoutFromPath !== null) {
+      set({ logoutFromPath: null });
+    }
   },
   updateAccess: (access_token) => {
     const current = get().tokens;

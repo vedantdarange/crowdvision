@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'vitest-axe';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+} from '@tanstack/react-query';
+import { queryClient } from '@/lib/queryClient';
 import { createMemoryRouter, MemoryRouter, Route, Routes } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { ErrorBoundary } from 'react-error-boundary';
@@ -58,7 +63,6 @@ const { socketMock, toastMock } = vi.hoisted(() => {
         return Array.from(listeners.get(event) ?? []);
       },
       reset() {
-        listeners.clear();
         socketMock.connected = true;
         socketMock.connect.mockClear();
         socketMock.disconnect.mockClear();
@@ -106,6 +110,7 @@ import {
 import { AdminZonesPage } from '@/features/admin';
 import { ZoneEditorPage } from '@/features/admin/ZoneEditor';
 import { MonitorPage } from '@/features/monitor/MonitorPage';
+import { MonitorHud } from '@/features/monitor/MonitorHud';
 import {
   resetStreamSnapshot,
   useMonitorStore,
@@ -552,7 +557,7 @@ describe('Phase F8 hardening, accessibility, states, and error checks', () => {
       expect(useConnection.getState().status).toBe('offline'),
     );
     expect(
-      await screen.findByText(/Offline — live data may be stale/i),
+      await screen.findByText(/Offline \/ data may be stale/i),
     ).toBeVisible();
 
     act(() => {
@@ -696,5 +701,136 @@ describe('Phase F8 hardening, accessibility, states, and error checks', () => {
     expect(
       await screen.findByRole('button', { name: /Recovered/i }),
     ).toBeVisible();
+  });
+
+  it('keeps Reconnecting until Socket.IO hello arrives AND active queries finish resyncing, and detects backend loss while online', async () => {
+    installStandardFetchMock();
+    queryClient.clear();
+
+    let call = 0;
+    let resolveResync!: (v: string) => void;
+    function LiveDataWatcher() {
+      const q = useQuery({
+        queryKey: ['f8-resync-probe'],
+        queryFn: () => {
+          call += 1;
+          if (call === 1) return Promise.resolve('initial');
+          return new Promise<string>((resolve) => {
+            resolveResync = resolve;
+          });
+        },
+      });
+      return <p>{q.data ?? 'loading'}</p>;
+    }
+
+    const resyncRouter = createMemoryRouter(
+      [
+        {
+          path: '/',
+          element: (
+            <RealtimeProvider>
+              <LiveDataWatcher />
+            </RealtimeProvider>
+          ),
+        },
+      ],
+      { initialEntries: ['/'] },
+    );
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={resyncRouter} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText('initial');
+
+    act(() => {
+      Object.defineProperty(globalThis.navigator, 'onLine', {
+        configurable: true,
+        value: false,
+      });
+      window.dispatchEvent(new Event('offline'));
+    });
+    expect(
+      await screen.findByText(/Offline \/ data may be stale/i),
+    ).toBeVisible();
+    expect(useConnection.getState().status).toBe('offline');
+
+    act(() => {
+      Object.defineProperty(globalThis.navigator, 'onLine', {
+        configurable: true,
+        value: true,
+      });
+      window.dispatchEvent(new Event('online'));
+    });
+    expect(useConnection.getState().status).toBe('reconnecting');
+
+    // Emit hello while the active query resync fetch is still in flight -> must stay Reconnecting.
+    act(() => {
+      for (const fn of socketMock.listenersFor('hello')) fn();
+    });
+    await waitFor(() => expect(call).toBe(2));
+    expect(useConnection.getState().status).toBe('reconnecting');
+    expect(
+      screen.getByText(/Reconnecting\.\.\. live data may be stale/i),
+    ).toBeVisible();
+
+    // Once active query refetch completes, status transitions to connected.
+    await act(async () => {
+      resolveResync('synced');
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(useConnection.getState().status).toBe('connected'),
+    );
+
+    // Backend loss while browser stays online triggers reconnecting cleanly via watchdog / health failure.
+    const watchdogRender = resyncRouter;
+    void watchdogRender;
+    vi.useFakeTimers();
+    const healthFailView = render(
+      <QueryClientProvider client={queryClient}>
+        <RealtimeProvider>
+          <p>Watchdog host</p>
+        </RealtimeProvider>
+      </QueryClientProvider>,
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 503 })),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(11_000);
+    });
+    expect(useConnection.getState().status).toBe('reconnecting');
+    healthFailView.unmount();
+    vi.useRealTimers();
+    queryClient.clear();
+  });
+
+  it('uses container-query responsive grid in MonitorHud so density and badge stay unclipped at narrow panel widths', () => {
+    const { container } = render(
+      <MonitorHud
+        lastResult={{
+          ...(frameResultFixture as FrameResult),
+          density: 0.1,
+          level: 'SAFE',
+          ok: true,
+        }}
+        fps={3}
+        latencyMs={{ p50: 42, p95: 75 }}
+        drops={0}
+      />,
+    );
+
+    const region = container.querySelector('[aria-label="Monitor statistics"]');
+    expect(region?.className).toContain('@container');
+    const grid = region?.firstElementChild;
+    expect(grid?.className).toContain('@[300px]:grid-cols-2');
+    expect(grid?.className).toContain('@[540px]:grid-cols-4');
+    expect(grid?.className).not.toContain('sm:grid-cols-4');
+    expect(region?.textContent).toMatch(/0\.1\s*people\/m²/);
+    expect(region?.textContent).toContain('Safe');
   });
 });

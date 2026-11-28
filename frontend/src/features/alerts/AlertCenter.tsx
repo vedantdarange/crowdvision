@@ -105,7 +105,11 @@ function ArmAlertsButton({
           disabled={push.busy}
           className="inline-flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-muted disabled:opacity-50"
         >
-          {push.busy ? 'Enabling push...' : 'Enable background push'}
+          {push.busy
+            ? 'Enabling push...'
+            : push.canRetry
+              ? 'Retry background push'
+              : 'Enable background push'}
         </button>
       )}
       <button
