@@ -30,8 +30,9 @@ export const useAdvisories = (id?: number) =>
   );
 export const useHelp = () =>
   useSuspenseQuery(resource<HelpInfo>(k.help, '/help-info'));
-export const useConfig = () =>
+export const useConfig = (enabled = true) =>
   useQuery({
     ...resource<RuntimeConfig>(k.config, '/config'),
     staleTime: Infinity,
+    enabled,
   });

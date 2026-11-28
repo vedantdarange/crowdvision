@@ -5,6 +5,11 @@ import { LevelBadge } from '@/components/status/LevelBadge';
 import { useAlertAction, label } from '@/features/police/Alerts';
 import { useBannerFeed } from './useBannerFeed';
 import { useAlertAudio } from './useAlertAudio';
+import {
+  useWebPush,
+  type WebPushState,
+  type WebPushStatus,
+} from '@/features/push';
 import { useAlertTitle } from './useAlertTitle';
 
 type Entry = { key: string; critical: boolean; time: string } & (
@@ -56,11 +61,25 @@ export function AlertBanner({
     </div>
   );
 }
+const PUSH_STATUS_LABELS: Record<WebPushStatus, string> = {
+  on: 'Push: On',
+  off: 'Push: Off',
+  blocked: 'Push: Blocked',
+  unsupported: 'Push: Unsupported',
+};
+
 function ArmAlertsButton({
   audio,
+  push,
 }: {
   audio: ReturnType<typeof useAlertAudio>;
+  push: WebPushState;
 }) {
+  const statusNotice =
+    push.status === 'blocked'
+      ? (push.notice ?? audio.notice)
+      : (audio.notice ?? push.notice);
+
   return (
     <div className="flex flex-wrap items-center gap-3">
       {audio.armed ? (
@@ -79,6 +98,16 @@ function ArmAlertsButton({
           Alerts not armed - tap to enable
         </button>
       )}
+      {audio.armed && push.status === 'off' && push.supported && (
+        <button
+          type="button"
+          onClick={() => void push.subscribe()}
+          disabled={push.busy}
+          className="inline-flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-muted disabled:opacity-50"
+        >
+          {push.busy ? 'Enabling push...' : 'Enable background push'}
+        </button>
+      )}
       <button
         className="inline-flex min-h-11 items-center gap-2"
         onClick={audio.toggleMute}
@@ -87,8 +116,18 @@ function ArmAlertsButton({
         {audio.muted ? <VolumeX size={18} /> : <Volume2 size={18} />} Mute alert
         sound
       </button>
+      <span
+        data-push-status={push.status}
+        className="rounded-md border px-2 py-1 text-xs font-medium"
+      >
+        {PUSH_STATUS_LABELS[push.status]}
+      </span>
       <small>Check volume / silent switch</small>
-      {audio.notice && <small role="status">{audio.notice}</small>}
+      {statusNotice && (
+        <small role="status" className="text-muted-foreground">
+          {statusNotice}
+        </small>
+      )}
     </div>
   );
 }
@@ -120,14 +159,22 @@ export function AlertCenter() {
       .map((e) => e.key)
       .sort()
       .join(',');
-  const audio = useAlertAudio(keys(true), keys(false));
+  const push = useWebPush();
+  const audio = useAlertAudio(keys(true), keys(false), {
+    onPermissionResult: (permission) => {
+      push.reportPermission(permission);
+      if (permission === 'granted') {
+        void push.subscribe('granted');
+      }
+    },
+  });
   useAlertTitle(entries.length);
   return (
     <section
       aria-label="Alert center"
       className="sticky top-0 z-20 grid max-h-[45svh] gap-2 overflow-y-auto rounded-md border bg-background px-4 py-2"
     >
-      <ArmAlertsButton audio={audio} />
+      <ArmAlertsButton audio={audio} push={push} />
       {feed.failed && (
         <p>
           Could not sync alert banners.{' '}

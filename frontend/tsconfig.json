@@ -16,6 +16,7 @@
     "noUnusedParameters": true,
     "types": [
       "vite/client",
+      "vite-plugin-pwa/client",
       "node",
       "vitest/globals",
       "@testing-library/jest-dom"
@@ -32,5 +33,6 @@
     "vite.config.ts",
     "vitest.config.ts",
     "../contract/types.ts"
-  ]
+  ],
+  "exclude": ["src/sw.ts"]
 }
