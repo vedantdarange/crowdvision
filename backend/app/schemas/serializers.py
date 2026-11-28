@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from app.core.time import to_iso_z
 
 if TYPE_CHECKING:
-    from app.models.models import Advisory, AlertEvent, AlertModel, Source, User, Zone
+    from app.models.models import Advisory, AlertEvent, AlertModel, Report, Source, User, Zone
 
 LIVE_STATE_PLACEHOLDER: dict[str, Any] = {
     "level": "NO_DATA",
@@ -216,4 +216,32 @@ def serialize_advisory(
         "created_at": to_iso_z(advisory.created_at),
         "expires_at": to_iso_z(advisory.expires_at),
         "is_active": advisory.is_active,
+    }
+
+
+def serialize_report(
+    report: "Report",
+    *,
+    creator: "User",
+    reviewer: "User | None" = None,
+    zone: "Zone | None" = None,
+) -> dict[str, Any]:
+    """Return a Report dict (contract §5 / B7)."""
+    return {
+        "id": report.id,
+        "kind": report.kind,
+        "status": report.status,
+        "zone_id": report.zone_id,
+        "zone_name": zone.name if zone is not None else None,
+        "lat": report.lat,
+        "lng": report.lng,
+        "count": int(round(report.count)) if report.count is not None else None,
+        "density_hint": report.density_hint,
+        "sos_type": report.sos_type,
+        "note": report.note,
+        "created_by": {"id": creator.id, "name": creator.name},
+        "created_at": to_iso_z(report.created_at),
+        "reviewed_by": _person_ref(reviewer) if report.reviewed_by is not None else None,
+        "reviewed_at": to_iso_z(report.reviewed_at),
+        "review_note": report.review_note,
     }

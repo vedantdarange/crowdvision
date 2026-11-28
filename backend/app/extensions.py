@@ -33,6 +33,16 @@ socketio = SocketIO()
 limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
 
 
+@limiter.request_filter
+def _exempt_when_app_rate_limit_disabled() -> bool:
+    """Honor each Flask app's own RATELIMIT_ENABLED setting on the shared Limiter."""
+    from flask import current_app, has_app_context
+
+    if has_app_context():
+        return not bool(current_app.config.get("RATELIMIT_ENABLED", True))
+    return False
+
+
 # ---------------------------------------------------------------------------
 # SQLite pragmas — applied on every new connection.
 # REQUIRED: without WAL and busy_timeout the app gets "database is locked".

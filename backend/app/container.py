@@ -22,6 +22,7 @@ from app.repositories.advisory_repo import AdvisoryRepository
 from app.repositories.alert_repo import AlertRepository
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.push_repo import PushSubscriptionRepository
+from app.repositories.report_repo import ReportRepository
 from app.repositories.settings_repo import SettingsRepository
 from app.repositories.source_repo import SourceRepository
 from app.repositories.user_repo import UserRepository
@@ -33,6 +34,7 @@ from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 from app.services.engine_sync import reload_engine_from_db
 from app.services.push_service import PushService
+from app.services.report_service import ReportService
 from app.services.settings_service import SettingsService
 from app.services.source_service import SourceService
 from app.services.user_service import UserService
@@ -52,6 +54,7 @@ class Container:
     advisory_repo: AdvisoryRepository
     zone_sample_repo: ZoneSampleRepository
     push_repo: PushSubscriptionRepository
+    report_repo: ReportRepository
     audit_service: AuditService
     auth_service: AuthService
     user_service: UserService
@@ -61,12 +64,14 @@ class Container:
     alert_service: AlertService
     advisory_service: AdvisoryService
     push_service: PushService
+    report_service: ReportService
     zone_engine: ZoneEngine
     emitter: RealtimeEmitter
     notifier: Notifier
     source_status_tracker: SourceStatusTracker
     task_state: BackgroundSchedulerState
     detection_manager: DetectionManager
+    report_retention_days: int = 30
 
 
 def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container:
@@ -84,6 +89,7 @@ def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container
     advisory_repo = AdvisoryRepository()
     zone_sample_repo = ZoneSampleRepository()
     push_repo = PushSubscriptionRepository()
+    report_repo = ReportRepository()
 
     zone_engine = ZoneEngine(auto_commit_alerts=False)
     emitter = RealtimeEmitter(clock=clock)
@@ -170,6 +176,16 @@ def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container
         source_status_tracker=source_status_tracker,
         clock=clock,
     )
+    report_service = ReportService(
+        report_repo=report_repo,
+        zone_repo=zone_repo,
+        user_repo=user_repo,
+        audit_service=audit_service,
+        detection_manager=detection_manager,
+        emitter=emitter,
+        notifier=notifier,
+        clock=clock,
+    )
 
     container = Container(
         clock=clock,
@@ -183,6 +199,7 @@ def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container
         advisory_repo=advisory_repo,
         zone_sample_repo=zone_sample_repo,
         push_repo=push_repo,
+        report_repo=report_repo,
         audit_service=audit_service,
         auth_service=auth_service,
         user_service=user_service,
@@ -192,12 +209,14 @@ def wire(flask_app: Flask, *, app_settings: Settings | None = None) -> Container
         alert_service=alert_service,
         advisory_service=advisory_service,
         push_service=push_service,
+        report_service=report_service,
         zone_engine=zone_engine,
         emitter=emitter,
         notifier=notifier,
         source_status_tracker=source_status_tracker,
         task_state=task_state,
         detection_manager=detection_manager,
+        report_retention_days=cfg.report_retention_days,
     )
     flask_app.extensions["container"] = container
     return container

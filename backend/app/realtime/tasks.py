@@ -84,6 +84,7 @@ def run_tick_once(flask_app: "Flask", now: datetime | None = None) -> dict[str, 
             "samples_written": 0,
             "advisories_expired": 0,
             "samples_pruned": 0,
+            "reports_pruned": 0,
             "source_changes": 0,
         }
 
@@ -159,16 +160,20 @@ def run_tick_once(flask_app: "Flask", now: datetime | None = None) -> dict[str, 
         expired_ids = container.advisory_service.expire_due_advisories(tick_now)
         summary["advisories_expired"] = len(expired_ids)
 
-        # 6. Hourly retention delete (zone_samples > 7 days)
+        # 6. Hourly retention delete (zone_samples > 7 days, reports > REPORT_RETENTION_DAYS)
         if (
             task_state.last_retention_at is None
             or (tick_now - task_state.last_retention_at).total_seconds() >= 3600.0
         ):
-            cutoff_naive = tick_naive - timedelta(days=7)
-            pruned = container.zone_sample_repo.delete_older_than(cutoff_naive)
+            sample_cutoff_naive = tick_naive - timedelta(days=7)
+            pruned_samples = container.zone_sample_repo.delete_older_than(sample_cutoff_naive)
+            retention_days = max(1, int(getattr(container, "report_retention_days", 30)))
+            report_cutoff_naive = tick_naive - timedelta(days=retention_days)
+            pruned_reports = container.report_repo.delete_older_than(report_cutoff_naive)
             db.session.commit()
             task_state.last_retention_at = tick_now
-            summary["samples_pruned"] = pruned
+            summary["samples_pruned"] = pruned_samples
+            summary["reports_pruned"] = pruned_reports
 
         return summary
 

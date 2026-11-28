@@ -846,6 +846,13 @@ class DetectionManager:
             raise DetectorUnavailable("Detection timed out.")
         res = holder[0]
         if not res.ok:
+            if res.error == "BAD_IMAGE":
+                from app.core.errors import ValidationAppError
+
+                raise ValidationAppError(
+                    "Invalid or unreadable image.",
+                    details={"image": ["Could not decode JPEG or PNG image."]},
+                )
             raise DetectorUnavailable(res.error or "Detection failed.")
         return res
 
