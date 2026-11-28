@@ -119,6 +119,19 @@ export const routes: RouteObject[] = [
       },
       page('/police/zones/:id', 'Zone live view', 'F4'),
       page('/police/monitor', 'Camera control', 'F4'),
+      ...(import.meta.env.DEV
+        ? [
+            {
+              path: '/police/monitor-dev',
+              handle: { title: 'Monitor dev harness', phase: 'F4' },
+              HydrateFallback: RouteLoading,
+              lazy: async () => ({
+                Component: (await import('@/features/monitor/MonitorDev'))
+                  .MonitorDev,
+              }),
+            },
+          ]
+        : []),
       page('/police/reports', 'Report review', 'F6'),
       page('/police/advisories', 'Broadcast advisory', 'F6'),
       {
