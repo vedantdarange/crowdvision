@@ -1,5 +1,7 @@
 import {
+  useMutation,
   useQuery,
+  useQueryClient,
   useSuspenseQuery,
   type QueryClient,
 } from '@tanstack/react-query';
@@ -9,7 +11,11 @@ import type {
   AlertDetail,
   ApiList,
   ApiOne,
+  HistoryPoint,
+  Level,
   Settings,
+  SourceInfo,
+  SourceKind,
   SourceStatusPayload,
   ZoneState,
 } from '@contract/types';
@@ -51,6 +57,97 @@ export function useZone(id: number) {
       (await apiClient<ApiOne<ZoneState>>('/zones/' + id, { signal })).data,
   });
 }
+
+export type HistoryRange = '30m' | '2h' | '24h';
+
+export const HISTORY_RANGES: Record<
+  HistoryRange,
+  { label: string; durationMs: number; bucketS: 10 | 60 | 300 }
+> = {
+  '30m': { label: '30 min', durationMs: 30 * 60 * 1000, bucketS: 10 },
+  '2h': { label: '2 h', durationMs: 2 * 60 * 60 * 1000, bucketS: 60 },
+  '24h': { label: '24 h', durationMs: 24 * 60 * 60 * 1000, bucketS: 300 },
+};
+
+export function useZoneHistory(zoneId: number, range: HistoryRange) {
+  const { durationMs, bucketS } = HISTORY_RANGES[range];
+  return useSuspenseQuery({
+    queryKey: k.zones.history(zoneId, range),
+    queryFn: async ({ signal }) => {
+      const to = new Date();
+      const from = new Date(to.getTime() - durationMs);
+      const params = new URLSearchParams({
+        from: from.toISOString(),
+        to: to.toISOString(),
+        bucket_s: String(bucketS),
+      });
+      return (
+        await apiClient<ApiOne<HistoryPoint[]>>(
+          `/zones/${zoneId}/history?${params}`,
+          { signal },
+        )
+      ).data;
+    },
+  });
+}
+
+export function useSources(zoneId?: number) {
+  return useSuspenseQuery({
+    queryKey: k.sources(zoneId ?? 'all'),
+    queryFn: async ({ signal }) => {
+      const query = zoneId ? `?zone_id=${zoneId}` : '';
+      return (
+        await apiClient<ApiOne<SourceInfo[]>>('/sources' + query, { signal })
+      ).data;
+    },
+  });
+}
+
+export interface CreateSourceInput {
+  zone_id: number;
+  name: string;
+  kind: SourceKind;
+}
+
+export function useCreateSource() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CreateSourceInput) => {
+      const payload: CreateSourceInput = {
+        zone_id: input.zone_id,
+        name: input.name,
+        kind: input.kind,
+      };
+      return (
+        await apiClient<ApiOne<SourceInfo>>('/sources', {
+          method: 'POST',
+          body: payload,
+        })
+      ).data;
+    },
+    onSuccess: (created) => {
+      client.setQueryData<SourceInfo[]>(k.sources(created.zone_id), (old) =>
+        old ? [...old, created] : [created],
+      );
+      client.setQueryData<SourceInfo[]>(k.sources('all'), (old) =>
+        old ? [...old, created] : old,
+      );
+      client.setQueryData<ZoneState[]>(k.zones.list, (old) =>
+        old?.map((z) =>
+          z.id === created.zone_id
+            ? { ...z, sources: [...z.sources, created] }
+            : z,
+        ),
+      );
+      client.setQueryData<ZoneState>(
+        k.zones.detail(created.zone_id),
+        (old) => old && { ...old, sources: [...old.sources, created] },
+      );
+      void client.invalidateQueries({ queryKey: ['sources'] });
+    },
+  });
+}
+
 export function useAlert(id: number) {
   return useSuspenseQuery({
     queryKey: k.alertDetail(id),
@@ -65,10 +162,17 @@ export function useDelay(enabled: boolean) {
     queryFn: async () => (await apiClient<ApiOne<Settings>>('/settings')).data,
   });
 }
-type Point = { ts: string; count: number | null; density: number | null };
-export const useSeries = create<{ zones: Record<number, Point[]> }>(() => ({
-  zones: {},
-}));
+export type SeriesPoint = {
+  ts: string;
+  count: number | null;
+  density: number | null;
+  level: Level;
+};
+export const useSeries = create<{ zones: Record<number, SeriesPoint[]> }>(
+  () => ({
+    zones: {},
+  }),
+);
 export function updatePoliceZone(client: QueryClient, zone: ZoneState) {
   // A socket can arrive before the initial snapshot. Keep this partial list
   // stale until GET /zones supplies the other zones.
@@ -89,7 +193,7 @@ export function updatePoliceZone(client: QueryClient, zone: ZoneState) {
         ...zones,
         [zone.id]: [
           ...(zones[zone.id] ?? []).filter((p) => p.ts !== ts),
-          { ts, count: zone.count, density: zone.density },
+          { ts, count: zone.count, density: zone.density, level: zone.level },
         ].slice(-300),
       },
     }));
@@ -117,6 +221,14 @@ export function updateSource(client: QueryClient, event: SourceStatusPayload) {
     k.zones.detail(event.zone_id),
     (old) => old && update(old),
   );
+  const patchSources = (old: SourceInfo[] | undefined) =>
+    old?.map((s) =>
+      s.id === event.source_id
+        ? { ...s, status: event.status, last_frame_at: event.last_frame_at }
+        : s,
+    );
+  client.setQueryData<SourceInfo[]>(k.sources(event.zone_id), patchSources);
+  client.setQueryData<SourceInfo[]>(k.sources('all'), patchSources);
 }
 function matches(a: Alert, f: Filters) {
   return (

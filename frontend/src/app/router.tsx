@@ -117,8 +117,20 @@ export const routes: RouteObject[] = [
           Component: (await import('@/features/police/Detail')).Detail,
         }),
       },
-      page('/police/zones/:id', 'Zone live view', 'F4'),
-      page('/police/monitor', 'Camera control', 'F4'),
+      {
+        ...page('/police/zones/:id', 'Zone live view', 'F4'),
+        lazy: async () => ({
+          Component: (await import('@/features/zones/PoliceZoneDetail'))
+            .PoliceZoneDetail,
+        }),
+      },
+      {
+        ...page('/police/monitor', 'Camera control', 'F4'),
+        lazy: async () => ({
+          Component: (await import('@/features/monitor/MonitorPage'))
+            .MonitorPage,
+        }),
+      },
       ...(import.meta.env.DEV
         ? [
             {

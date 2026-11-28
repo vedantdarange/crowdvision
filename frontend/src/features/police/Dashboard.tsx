@@ -79,6 +79,7 @@ export function Dashboard() {
                 {z.live_updated_at && 'Updated '}
                 <Age ts={z.live_updated_at} />
               </small>
+              <Link to={'/police/zones/' + z.id}>View live chart</Link>
             </article>
           );
         })}

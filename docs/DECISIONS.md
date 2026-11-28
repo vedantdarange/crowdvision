@@ -39,9 +39,11 @@ Person B approved `POST /__mock/auth-expired` as a loopback-only mock control ou
 
 Person B approved shadcn supporting packages `tw-animate-css`, `next-themes`, and `@types/node`, `@types/react`, `@types/react-dom`, `@types/express`, `@types/cors`. The current Vite template selected TypeScript 7, while typescript-eslint 8.74 supports TypeScript below 6.1, so F0 uses TypeScript 6.0. The generated font and `cn` dependency were removed; system fonts and the plan-listed clsx/tailwind-merge are used. Requested React Hook Form components use shadcn's official new-york form registry because the current nova preset skipped that wrapper.
 
-## Pending clarification — display timezone
+## 2026-11-28 — Display timezone resolved (browser-local UI, IST analytics)
 
-Shared contract §1 specifies Asia/Kolkata display time; §14.5 says browser-local UI time. F0 only formats relative time, so it does not choose between these conflicting absolute-time rules. Clarify before adding absolute timestamp displays. Analytics remains explicitly bucketed in Asia/Kolkata as specified.
+*Decision:* Absolute UI timestamps (such as `<Age>` hover tooltips and zone history chart tooltips) format in the browser's local timezone (`00_SHARED_CONTRACT.md` §14.5), while relative times show `"N s ago"`. Server-computed analytics (`peak_hours`) remain explicitly bucketed in `Asia/Kolkata` (`IST`, `UTC+5:30`) per §1 and §5.
+*Rationale:* Resolves the earlier §1 vs §14.5 ambiguity consistently with F3a's existing `<Age>` implementation while preserving IST venue-hour bucketing for analytics.
+*Impact:* Police/public timestamp tooltips stay browser-local; F7 analytics keeps the explicit `IST` label.
 
 ---
 

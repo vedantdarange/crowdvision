@@ -8,6 +8,12 @@ import type { ApiOne, FrameResult, RuntimeConfig } from '@contract/types';
 import { apiClient } from '@/lib/apiClient';
 import { queryKeys as k } from '@/lib/queryKeys';
 import { socket } from '@/lib/socket';
+import {
+  claimActiveStream,
+  releaseActiveStream,
+  useMonitorStore,
+  type FrameStreamError,
+} from './streamStore';
 
 export type StreamerState =
   'idle' | 'streaming' | 'in-use' | 'stopped' | 'error';
@@ -74,6 +80,13 @@ export interface FrameStreamerOptions {
   resetRequested?: boolean;
   /** Called after the reset flag is consumed. */
   onResetConsumed?: () => void;
+  /**
+   * When false, frame updates write only to the Zustand monitor store instead of
+   * calling local React setState (prevents 3 FPS re-render storms in MonitorPage).
+   */
+  syncState?: boolean;
+  /** Called when the server or another streamer stops this stream. */
+  onExternalStop?: (reason: FrameStreamError | 'PREEMPTED') => void;
 }
 
 export function useFrameStreamer({
@@ -84,6 +97,8 @@ export function useFrameStreamer({
   config: configOverride,
   resetRequested = false,
   onResetConsumed,
+  syncState = true,
+  onExternalStop,
 }: FrameStreamerOptions): FrameStreamerResult {
   const queryClient = useContext(QueryClientContext);
   const configQuery = useQuery(
@@ -104,6 +119,7 @@ export function useFrameStreamer({
   const [lastResult, setLastResult] = useState<FrameResult | null>(null);
   const [lastResultAt, setLastResultAt] = useState<number | null>(null);
 
+  const ownerId = useRef(Symbol('frame-streamer')).current;
   const runIdRef = useRef(0);
   const seqRef = useRef(0);
   const inFlightRef = useRef(false);
@@ -120,8 +136,14 @@ export function useFrameStreamer({
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
 
+  const syncStateRef = useRef(syncState);
+  syncStateRef.current = syncState;
+
   const onResetConsumedRef = useRef(onResetConsumed);
   onResetConsumedRef.current = onResetConsumed;
+
+  const onExternalStopRef = useRef(onExternalStop);
+  onExternalStopRef.current = onExternalStop;
 
   const resolved = configOverride ?? configQuery.data ?? DEFAULTS;
   const targetFps = Math.max(0.1, resolved.target_fps);
@@ -153,8 +175,21 @@ export function useFrameStreamer({
     inFlightRef.current = false;
     inFlightSeqRef.current = 0;
     clearTimers();
-    setState((prev) => (prev === 'in-use' ? 'in-use' : 'stopped'));
-  }, [clearTimers]);
+    releaseActiveStream(ownerId);
+    if (syncStateRef.current) {
+      setState((prev) => (prev === 'in-use' ? 'in-use' : 'stopped'));
+    } else {
+      useMonitorStore.setState((prev) => ({
+        state: prev.state === 'in-use' ? 'in-use' : 'stopped',
+        activeSourceId: null,
+      }));
+    }
+  }, [clearTimers, ownerId]);
+
+  const preemptStop = useCallback(() => {
+    stop();
+    onExternalStopRef.current?.('PREEMPTED');
+  }, [stop]);
 
   useEffect(() => {
     if (!enabled || !video || sourceId <= 0) {
@@ -163,9 +198,16 @@ export function useFrameStreamer({
       inFlightRef.current = false;
       inFlightSeqRef.current = 0;
       clearTimers();
-      setState('idle');
+      releaseActiveStream(ownerId);
+      if (syncStateRef.current) {
+        setState('idle');
+      } else {
+        useMonitorStore.setState({ state: 'idle', activeSourceId: null });
+      }
       return;
     }
+
+    claimActiveStream(ownerId, preemptStop);
 
     if (!canvasRef.current) {
       canvasRef.current = document.createElement('canvas');
@@ -182,12 +224,27 @@ export function useFrameStreamer({
     lastSentRef.current = -Infinity;
     latencySamplesRef.current = [];
     frameTimesRef.current = [];
-    setDrops(0);
-    setFps(0);
-    setLatencyMs({ p50: 0, p95: 0 });
-    setLastResult(null);
-    setLastResultAt(null);
-    setState('streaming');
+
+    if (syncStateRef.current) {
+      setDrops(0);
+      setFps(0);
+      setLatencyMs({ p50: 0, p95: 0 });
+      setLastResult(null);
+      setLastResultAt(null);
+      setState('streaming');
+    } else {
+      useMonitorStore.setState({
+        activeSourceId: sourceId,
+        state: 'streaming',
+        fps: 0,
+        latencyMs: { p50: 0, p95: 0 },
+        drops: 0,
+        lastResult: null,
+        lastResultAt: null,
+        lastError: null,
+        inUseSourceId: null,
+      });
+    }
 
     let metadataListenerAttached = false;
 
@@ -310,11 +367,17 @@ export function useFrameStreamer({
             while (times.length > 0 && times[0]! < cutoff) times.shift();
             if (times.length >= 2) {
               const span = times[times.length - 1]! - times[0]!;
-              setFps(
+              const nextFps =
                 span > 0
                   ? Math.round(((times.length - 1) / (span / 1000)) * 10) / 10
-                  : 0,
-              );
+                  : 0;
+              if (syncStateRef.current) {
+                setFps(nextFps);
+              } else {
+                useMonitorStore.setState((prev) =>
+                  prev.fps === nextFps ? prev : { fps: nextFps },
+                );
+              }
             }
 
             timeoutRef.current = setTimeout(() => {
@@ -323,7 +386,13 @@ export function useFrameStreamer({
               if (inFlightRef.current && inFlightSeqRef.current === seq) {
                 inFlightRef.current = false;
                 inFlightSeqRef.current = 0;
-                setDrops((d) => d + 1);
+                if (syncStateRef.current) {
+                  setDrops((d) => d + 1);
+                } else {
+                  useMonitorStore.setState((prev) => ({
+                    drops: prev.drops + 1,
+                  }));
+                }
                 trySendNext();
               }
             }, TIMEOUT_MS);
@@ -346,31 +415,62 @@ export function useFrameStreamer({
       inFlightRef.current = false;
       inFlightSeqRef.current = 0;
 
+      const now = Date.now();
+
       if (result.error === 'SOURCE_IN_USE') {
         runIdRef.current += 1;
         stoppedRef.current = true;
         clearTimers();
-        setLastResult(result);
-        setLastResultAt(Date.now());
-        setState('in-use');
+        releaseActiveStream(ownerId);
+        if (syncStateRef.current) {
+          setLastResult(result);
+          setLastResultAt(now);
+          setState('in-use');
+        } else {
+          useMonitorStore.setState({
+            state: 'in-use',
+            activeSourceId: null,
+            lastResult: result,
+            lastResultAt: now,
+            lastError: 'SOURCE_IN_USE',
+            inUseSourceId: sourceId,
+          });
+        }
+        onExternalStopRef.current?.('SOURCE_IN_USE');
         return;
       }
 
-      const now = Date.now();
+      let nextLatency: LatencyStats | null = null;
       if (sentAtRef.current > 0) {
         const latency = Math.max(0, now - sentAtRef.current);
         const samples = latencySamplesRef.current;
         samples.push(latency);
         if (samples.length > 100) samples.shift();
         const sorted = [...samples].sort((a, b) => a - b);
-        setLatencyMs({
+        nextLatency = {
           p50: Math.round(percentile(sorted, 50)),
           p95: Math.round(percentile(sorted, 95)),
-        });
+        };
       }
 
-      setLastResult(result);
-      setLastResultAt(now);
+      if (syncStateRef.current) {
+        if (nextLatency) setLatencyMs(nextLatency);
+        setLastResult(result);
+        setLastResultAt(now);
+      } else {
+        const nextError =
+          !result.ok && result.error && result.error !== 'DETECTOR_BUSY'
+            ? result.error
+            : null;
+        useMonitorStore.setState((prev) => ({
+          ...(nextLatency ? { latencyMs: nextLatency } : {}),
+          lastResult: result,
+          lastResultAt: now,
+          lastError: nextError,
+          inUseSourceId:
+            prev.inUseSourceId === sourceId ? null : prev.inUseSourceId,
+        }));
+      }
       trySendNext();
     };
 
@@ -395,6 +495,7 @@ export function useFrameStreamer({
         document.removeEventListener('visibilitychange', onVisibilityChange);
       }
       clearTimers();
+      releaseActiveStream(ownerId);
       video.removeEventListener('loadedmetadata', onMetadataReady);
     };
   }, [
@@ -406,6 +507,8 @@ export function useFrameStreamer({
     jpegQuality,
     isWebcam,
     clearTimers,
+    ownerId,
+    preemptStop,
   ]);
 
   return {

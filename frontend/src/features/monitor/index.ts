@@ -11,5 +11,12 @@ export type {
 } from './useFrameStreamer';
 export { DetectionOverlay } from './DetectionOverlay';
 export { MonitorHud } from './MonitorHud';
+export { SourcePicker } from './SourcePicker';
+export { MonitorPage } from './MonitorPage';
+export {
+  useMonitorStore,
+  clearStreamErrors,
+  resetStreamSnapshot,
+} from './streamStore';
 export { computeContainRect, mapBoxes } from './overlay';
 export type { DisplayRect, PixelBox } from './overlay';
