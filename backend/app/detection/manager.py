@@ -323,6 +323,117 @@ class DetectionManager:
         if isinstance(self.detector, FakeDetector):
             self.detector._counts.clear()
 
+    def prune_runtime_state(
+        self,
+        active_source_ids: set[int] | None = None,
+        *,
+        stale_after_s: float = 30.0,
+    ) -> dict[str, int]:
+        """Sweep expired inflight/lease/inactivity state and deleted sources."""
+        now_mono = time.monotonic()
+        lease_ttl = max(float(stale_after_s), INFLIGHT_TTL_S)
+        inactivity_ttl = max(INACTIVITY_RESET_S * 2.0, 60.0)
+        removed_sources: set[int] = set()
+
+        with self._pipeline_lock:
+            before_inf = len(self._inflight)
+            self._cleanup_inflight_locked(now_mono)
+            inflight_pruned = before_inf - len(self._inflight)
+
+            expired_leases = [
+                sid
+                for sid, (_, last_s) in self._leases.items()
+                if (now_mono - last_s) > lease_ttl
+            ]
+            for sid in expired_leases:
+                self._leases.pop(sid, None)
+
+            expired_last_sub = [
+                sid
+                for sid, last_s in self._source_last_submitted_mono.items()
+                if (now_mono - last_s) >= inactivity_ttl
+            ]
+            for sid in expired_last_sub:
+                self._source_last_submitted_mono.pop(sid, None)
+
+            if active_source_ids is not None:
+                inactive_leases = [
+                    sid for sid in self._leases if sid not in active_source_ids
+                ]
+                for sid in inactive_leases:
+                    self._leases.pop(sid, None)
+                    removed_sources.add(sid)
+
+                inactive_sub = [
+                    sid
+                    for sid in self._source_last_submitted_mono
+                    if sid not in active_source_ids
+                ]
+                for sid in inactive_sub:
+                    self._source_last_submitted_mono.pop(sid, None)
+                    removed_sources.add(sid)
+
+                inactive_resets = [
+                    sid for sid in self._pending_reset if sid not in active_source_ids
+                ]
+                for sid in inactive_resets:
+                    self._pending_reset.pop(sid, None)
+                    removed_sources.add(sid)
+
+                inactive_inf = [
+                    rid
+                    for rid, entry in self._inflight.items()
+                    if entry[1] != CITIZEN_REPORT_SOURCE_ID
+                    and entry[1] not in active_source_ids
+                ]
+                for rid in inactive_inf:
+                    entry = self._inflight.pop(rid, None)
+                    if entry is not None:
+                        removed_sources.add(entry[1])
+                inflight_pruned += len(inactive_inf)
+
+            req_q = self._request_queue
+
+        if req_q is not None:
+            for sid in removed_sources:
+                try:
+                    req_q.put_nowait(ResetSource(source_id=sid))
+                except Exception:
+                    break
+
+        return {
+            "inflight_pruned": inflight_pruned,
+            "leases_pruned": len(expired_leases),
+            "inactive_sources_pruned": len(removed_sources),
+        }
+
+    def runtime_stats(self) -> dict[str, Any]:
+        """Return queue depths and bounded-map sizes for soak/health monitoring."""
+        with self._pipeline_lock:
+            req_q = self._request_queue
+            res_q = self._result_queue
+            stats: dict[str, Any] = {
+                "inflight": len(self._inflight),
+                "leases": len(self._leases),
+                "once_waiters": len(self._once_waiters),
+                "ping_waiters": len(self._ping_waiters),
+                "pending_reset": len(self._pending_reset),
+                "last_submitted_sources": len(self._source_last_submitted_mono),
+                "fake_counts": len(self._fake_counts),
+                "worker_alive": bool(self._process is not None and self._process.is_alive()),
+                "detector_status": self._detector_status,
+            }
+
+        for name, q in (("request_queue_depth", req_q), ("result_queue_depth", res_q)):
+            if q is None:
+                stats[name] = 0
+                continue
+            try:
+                stats[name] = int(q.qsize())
+            except (NotImplementedError, AttributeError, ValueError, OSError):
+                stats[name] = -1
+        return stats
+
     def _fail_pending_waiters_locked(self) -> None:
         """Unblock any pending detect_once callers and health-probe waiters when worker stops/crashes."""
         for req_id, (evt, holder) in list(self._once_waiters.items()):

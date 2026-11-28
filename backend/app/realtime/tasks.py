@@ -54,6 +54,14 @@ class SourceStatusTracker:
         with self._lock:
             self._status.clear()
 
+    def prune_sources(self, active_source_ids: set[int]) -> int:
+        """Remove status entries for sources no longer active."""
+        with self._lock:
+            stale = [sid for sid in self._status if sid not in active_source_ids]
+            for sid in stale:
+                self._status.pop(sid, None)
+            return len(stale)
+
 
 class BackgroundSchedulerState:
     """Mutable throttling/retention timestamps for the 1 Hz background loop."""
@@ -68,6 +76,13 @@ class BackgroundSchedulerState:
     def reset(self) -> None:
         self.last_sample_at.clear()
         self.last_retention_at = None
+
+    def prune_zones(self, active_zone_ids: set[int]) -> int:
+        """Remove sample timestamps for zones no longer active."""
+        stale = [zid for zid in self.last_sample_at if zid not in active_zone_ids]
+        for zid in stale:
+            self.last_sample_at.pop(zid, None)
+        return len(stale)
 
 
 def run_tick_once(flask_app: "Flask", now: datetime | None = None) -> dict[str, Any]:
@@ -174,6 +189,21 @@ def run_tick_once(flask_app: "Flask", now: datetime | None = None) -> dict[str, 
             task_state.last_retention_at = tick_now
             summary["samples_pruned"] = pruned_samples
             summary["reports_pruned"] = pruned_reports
+
+        # 7. Bound in-memory caches to currently active zones/sources + TTL sweep
+        active_zone_ids = {z.id for z in active_zones}
+        active_source_ids = {s.id for s in active_sources}
+        task_state.prune_zones(active_zone_ids)
+        container.source_status_tracker.prune_sources(active_source_ids)
+        container.emitter.prune_zones(active_zone_ids)
+        container.emitter.prune_stale()
+        dm = getattr(container, "detection_manager", None)
+        if dm is not None and hasattr(dm, "prune_runtime_state"):
+            cfg = container.settings_service.get_settings()
+            dm.prune_runtime_state(
+                active_source_ids,
+                stale_after_s=float(cfg.get("stale_after_s", 10.0)),
+            )
 
         return summary
 

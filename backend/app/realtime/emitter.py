@@ -146,6 +146,32 @@ class RealtimeEmitter:
         with self._lock:
             self._last_sent.clear()
 
+    def prune_zones(self, active_zone_ids: set[int]) -> int:
+        """Drop cached throttle timestamps for deactivated or deleted zones."""
+        with self._lock:
+            stale_keys = [k for k in self._last_sent if k[1] not in active_zone_ids]
+            for k in stale_keys:
+                self._last_sent.pop(k, None)
+            return len(stale_keys)
+
+    def prune_stale(self, max_age_s: float = 3600.0) -> int:
+        """Drop cached throttle entries older than *max_age_s* seconds."""
+        now_s = self._clock.time()
+        with self._lock:
+            stale_keys = [
+                k
+                for k, (last_t, _, _) in self._last_sent.items()
+                if (now_s - last_t) >= max_age_s
+            ]
+            for k in stale_keys:
+                self._last_sent.pop(k, None)
+            return len(stale_keys)
+
+    def stats(self) -> dict[str, int]:
+        """Return bounded-state diagnostics for soak tests and health inspection."""
+        with self._lock:
+            return {"throttle_entries": len(self._last_sent)}
+
 
 _fallback_emitter = RealtimeEmitter()
 

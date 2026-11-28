@@ -117,6 +117,17 @@ def run_worker(
                     if tracker is not None and (msg.reset or inactivity_expired):
                         tracker.reset(msg.source_id)
                     source_last_seen[msg.source_id] = now_s
+                    if len(source_last_seen) > 256:
+                        cutoff_s = now_s - max(INACTIVITY_RESET_S * 10.0, 3600.0)
+                        stale_ids = [
+                            sid
+                            for sid, ts in source_last_seen.items()
+                            if sid != msg.source_id and ts <= cutoff_s
+                        ]
+                        for sid in stale_ids:
+                            source_last_seen.pop(sid, None)
+                            if tracker is not None:
+                                tracker.reset(sid)
 
                 boxes = detector.detect(msg.jpeg, msg.source_id, msg.conf, msg.imgsz)
                 raw_count = len(boxes)

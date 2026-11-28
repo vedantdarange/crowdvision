@@ -1,43 +1,72 @@
-# Crowd Safety Monitor — backend dependencies
-# Pin after first successful install. Run: pip check
-# DO NOT add libraries not in the plan without asking Person A.
+# Crowd Safety Monitor — backend dependencies (frozen & verified with pip check)
+# Install CPU PyTorch + these deps via: pip install -r requirements.txt
+# For NVIDIA GPU (CUDA 12.6), install torch/torchvision first from:
+#   pip install torch==2.14.1+cu126 torchvision==0.29.1+cu126 --index-url https://download.pytorch.org/whl/cu126
+# DO NOT install opencv-python-headless alongside opencv-python.
 
 # Web
 Flask==3.1.1
 Flask-Cors==5.0.1
-# gunicorn==23.0.0  # demo on Linux (B8)
+Werkzeug==3.1.9
+# gunicorn==23.0.0  # demo on Linux (use python wsgi.py on Windows)
 
 # Realtime (threading mode — no eventlet/gevent)
 Flask-SocketIO==5.5.1
+python-socketio==5.18.1
+python-engineio==4.15.1
 simple-websocket==1.1.0
+wsproto==1.3.2
+bidict==0.24.1
 
 # DB
 SQLAlchemy==2.0.41
 Flask-SQLAlchemy==3.1.1
 Flask-Migrate==4.1.0
+alembic==1.20.1
+Mako==1.4.3
+greenlet==3.5.6
 
 # Validation
 pydantic==2.11.5
+pydantic_core==2.33.2
+annotated-types==0.8.0
+typing_extensions==4.16.0
+typing-inspection==0.4.5
 
-# Auth
+# Auth & Crypto
 Flask-JWT-Extended==4.7.1
+PyJWT==2.15.1
 argon2-cffi==23.1.0
+argon2-cffi-bindings==26.2.0
+cryptography==50.0.2
+cffi==2.1.1
+pycparser==3.12
 
 # Rate limiting
 Flask-Limiter==3.12.0
+limits==5.8.0
+ordered-set==4.1.0
+Deprecated==3.0.1
+wrapt==2.5.2
 
-# Detection (B5 — not installed in B0)
-# ultralytics
-# opencv-python
-# numpy
-# supervision
-
-# Optional tracking (B5 — only if USE_TRACKER=true)
-# trackers
-
-# Optional speed-up (B5 — after export)
-# openvino
-# onnxruntime
+# Detection & Tracking (B5 / B8 — ultralytics brings CPU torch/torchvision by default)
+ultralytics==8.4.220
+ultralytics-thop==2.2.5
+ultralytics-platform==0.1.121
+opencv-python==5.1.0.95
+numpy==2.5.4
+scipy==1.18.1
+pillow==13.0.0
+supervision==0.32.3
+trackers==2.7.1
+jsonargparse==4.53.0
+docstring_parser==0.18.0
+PyYAML==6.0.4
+matplotlib==3.11.2
+polars==2.2.0
+polars-runtime-32==2.2.0
+av==19.0.2
+psutil==7.2.2
 
 # Geometry
 shapely==2.1.1
@@ -45,17 +74,31 @@ shapely==2.1.1
 # Push (B6)
 pywebpush==2.5.0
 py-vapid==1.9.6
+http_ece==1.2.1
+requests==2.34.2
+httpx==0.29.0
+httpcore==1.0.9
+h11==0.16.0
+aiohttp==3.14.5
+certifi==2026.11.20
+urllib3==2.8.0
+charset-normalizer==3.5.3
+idna==3.20
 
 # Tests
 pytest==8.4.0
 pytest-cov==6.1.0
+coverage==7.17.5
+iniconfig==2.3.1
+pluggy==1.7.0
 
 # Observability
 python-json-logger==3.3.0
+# sentry-sdk  # optional if SENTRY_DSN is set
 
 # Eval (B9)
-# scikit-learn
-# pandas
-
-# Optional Sentry
-# sentry-sdk
+scikit-learn==1.9.1
+joblib==1.6.0
+threadpoolctl==3.8.0
+narwhals==2.29.0
+cloudpickle==3.1.3

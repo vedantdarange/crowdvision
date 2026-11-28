@@ -1,0 +1,6 @@
+scenario,steps,engine_false_alarms,engine_missed_alarms,naive_false_alarms,naive_missed_alarms,engine_transitions,naive_transitions,flicker_reduction_pct
+transient_spike,24,0,0,3,0,0,5,100.0
+sustained_crowd_ramp,32,0,0,0,0,3,3,0.0
+boundary_oscillation,48,0,0,8,0,1,27,96.3
+camera_dropout_recovery,41,0,0,0,0,4,4,0.0
+video:crowd-video.mp4,40,0,0,0,0,0,15,100.0

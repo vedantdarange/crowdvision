@@ -438,9 +438,11 @@ class ZoneEngine:
                     snap.last_escalated_at = act.reminded_at
             elif isinstance(act, MarkReraiseChecked):
                 lst = self._pending_reraises.get(act.zone_id, [])
-                self._pending_reraises[act.zone_id] = [
-                    r for r in lst if r.id != act.alert_id
-                ]
+                remaining = [r for r in lst if r.id != act.alert_id]
+                if remaining:
+                    self._pending_reraises[act.zone_id] = remaining
+                else:
+                    self._pending_reraises.pop(act.zone_id, None)
             elif isinstance(act, SendPush):
                 if act.level == "WARNING":
                     z_rt = self._zones.get(act.zone_id)
