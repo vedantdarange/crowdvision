@@ -291,3 +291,217 @@ class TestFakeFeedRealtime:
 
         bad = runner.invoke(args=["fake-feed", "--zone", "99999", "--profile", "ramp"])
         assert bad.exit_code != 0
+
+    def test_cli_fake_feed_serve_stays_alive_serves_health_and_streams_socket(self, tmp_path):
+        """Reproduces & prevents the bug where `flask fake-feed --serve` exited immediately."""
+        import ctypes
+        from ctypes import wintypes
+        import json
+        import os
+        import signal
+        import socket
+        import subprocess
+        import sys
+        import time
+        import urllib.request
+        import simple_websocket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = int(sock.getsockname()[1])
+
+        def child_pids(parent_pid: int) -> list[int]:
+            if os.name != "nt":
+                out = subprocess.check_output(["pgrep", "-P", str(parent_pid)], text=True)
+                return [int(p) for p in out.split() if p.strip().isdigit()]
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+            class PROCESSENTRY32W(ctypes.Structure):
+                _fields_ = [
+                    ("dwSize", wintypes.DWORD),
+                    ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260),
+                ]
+
+            snap = k32.CreateToolhelp32Snapshot(0x00000002, 0)
+            res: list[int] = []
+            try:
+                entry = PROCESSENTRY32W()
+                entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+                if k32.Process32FirstW(snap, ctypes.byref(entry)):
+                    while True:
+                        if int(entry.th32ParentProcessID) == int(parent_pid):
+                            res.append(int(entry.th32ProcessID))
+                        if not k32.Process32NextW(snap, ctypes.byref(entry)):
+                            break
+            finally:
+                k32.CloseHandle(snap)
+            return res
+
+        def pid_alive(pid: int) -> bool:
+            if os.name != "nt":
+                try:
+                    os.kill(pid, 0)
+                    return True
+                except OSError:
+                    return False
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            h = k32.OpenProcess(0x1000, False, int(pid))
+            if not h:
+                return False
+            try:
+                code = wintypes.DWORD(0)
+                return bool(k32.GetExitCodeProcess(h, ctypes.byref(code))) and int(code.value) == 259
+            finally:
+                k32.CloseHandle(h)
+
+        backend_dir = __import__("pathlib").Path(__file__).resolve().parents[2]
+        db_path = tmp_path / "fake_feed_serve.db"
+        env = os.environ.copy()
+        env.update(
+            {
+                "DATABASE_URL": f"sqlite:///{db_path.as_posix()}",
+                "FLASK_ENV": "development",
+                "SERVE_FRONTEND": "false",
+                "DETECTOR_BACKEND": "fake",
+                "SEED_PASSWORD": "Demo@1234",
+                "SECRET_KEY": "fake-feed-serve-secret-key",
+                "JWT_SECRET_KEY": "fake-feed-serve-jwt-secret-key-at-least-32-bytes!",
+                "VAPID_PUBLIC_KEY": "",
+                "VAPID_PRIVATE_KEY": "",
+                "RATELIMIT_ENABLED": "false",
+            }
+        )
+
+        for cmd in (["db", "upgrade"], ["seed-demo"]):
+            r = subprocess.run(
+                [sys.executable, "-m", "flask", "--app", "wsgi:app", *cmd],
+                cwd=str(backend_dir),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert r.returncode == 0, f"flask {cmd} failed: {r.stderr}"
+
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "flask",
+                "--app",
+                "wsgi:app",
+                "fake-feed",
+                "--zone",
+                "1",
+                "--profile",
+                "ramp",
+                "--speed",
+                "5.0",
+                "--serve",
+                "--port",
+                str(port),
+            ],
+            cwd=str(backend_dir),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=creationflags,
+        )
+
+        worker_pids: list[int] = []
+        ws = None
+        try:
+            health: dict | None = None
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline:
+                if proc.poll() is not None:
+                    out, err = proc.communicate(timeout=5)
+                    pytest.fail(
+                        f"flask fake-feed --serve exited early with code={proc.returncode}\n"
+                        f"stdout={out}\nstderr={err}"
+                    )
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/health", timeout=2.0) as resp:
+                        if resp.status == 200:
+                            health = json.loads(resp.read().decode("utf-8"))
+                            if health.get("detector") == "ready" and health.get("worker_alive") is True:
+                                break
+                except Exception:
+                    pass
+                time.sleep(0.2)
+
+            assert health is not None and health.get("detector") == "ready" and health.get("worker_alive") is True, (
+                f"Health check failed: {health}"
+            )
+            worker_pids = child_pids(proc.pid)
+            assert len(worker_pids) == 1
+
+            ws = simple_websocket.Client.connect(
+                f"ws://127.0.0.1:{port}/socket.io/?EIO=4&transport=websocket"
+            )
+            eio_open = ws.receive(timeout=5)
+            assert isinstance(eio_open, str) and eio_open.startswith("0")
+            ws.send("40")
+
+            zone_updates: list[dict] = []
+            ws_deadline = time.monotonic() + 10.0
+            while len(zone_updates) < 2 and time.monotonic() < ws_deadline:
+                if proc.poll() is not None:
+                    pytest.fail(f"flask fake-feed --serve exited mid-ramp with code={proc.returncode}")
+                pkt = ws.receive(timeout=5)
+                if pkt == "2":
+                    ws.send("3")
+                    continue
+                if isinstance(pkt, str) and pkt.startswith("42"):
+                    ev, payload = json.loads(pkt[2:])
+                    if ev == "zone:update" and payload.get("zone_id") == 1:
+                        zone_updates.append(payload)
+
+            assert len(zone_updates) >= 2, f"Expected live ramp zone:update events, got {zone_updates}"
+            # Verify server remained alive past multiple ramp steps
+            assert proc.poll() is None
+
+            ws.send("41")
+            ws.close()
+            ws = None
+        finally:
+            if ws is not None:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+            if proc.poll() is None:
+                sig = signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT
+                proc.send_signal(sig)
+                try:
+                    proc.wait(timeout=10.0)
+                except subprocess.TimeoutExpired:
+                    proc.terminate()
+                    proc.wait(timeout=5.0)
+                    pytest.fail("flask fake-feed --serve did not shut down within 10s")
+            try:
+                proc.communicate(timeout=2.0)
+            except Exception:
+                pass
+
+            wait_exit = time.monotonic() + 3.0
+            while any(pid_alive(p) for p in worker_pids) and time.monotonic() < wait_exit:
+                time.sleep(0.1)
+            orphans = [p for p in worker_pids if pid_alive(p)]
+            if orphans:
+                for p in orphans:
+                    if os.name == "nt":
+                        subprocess.run(["taskkill", "/F", "/PID", str(p)], capture_output=True)
+                    else:
+                        os.kill(p, signal.SIGKILL)
+            assert orphans == [], f"Orphan worker processes left behind: {orphans}"
