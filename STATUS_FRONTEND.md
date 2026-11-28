@@ -1,4 +1,14 @@
-# Frontend status — 27 November 2026
+# Frontend status — 28 November 2026
+
+## F3a — Police dashboard, alert queue and alert detail
+
+Police and admins can monitor live zones, filter and paginate alerts, open timelines, and acknowledge, respond or resolve with an optional note. The dashboard shows zone thresholds, trend, source availability and the age of the last live reading. Socket events update zone and alert caches and maintain up to 300 live samples per zone. Alert writes update visible lists immediately, roll back on failure and refetch after a conflict. The arming chip is a preview. Monitor, reports and zone live view retain their placeholder routes.
+
+**Verification.** From `frontend/`, `npm.cmd test` passed 110 of 110 tests in 11 files in 18.54 seconds. Coverage includes legal actions, cleared conditions awaiting review, feed and re-raise timeline labels, list membership, deduplication, the series cap, rollback on 409, access guards, keyboard operation and axe checks on both dashboard and queue. `npm.cmd run lint` and `npm.cmd run build` passed, including TypeScript. The build emitted its large-chunk warning. The jsdom axe checks exclude color contrast and use a map stub.
+
+**Browser checks.** On the mock ramp, filtered to Main Gate, acknowledged alert #100 with a note, verified its timeline, resolved it, and saw the dashboard count drop from two to one. A later ramp raised #121. At a 390 px viewport the queue displayed cards without horizontal overflow. B4b was already merged in PR #5 (89211f4). A second run used its Flask fake feed and a temporary seeded SQLite database. Police responded to and resolved Main Gate #1, saw the empty Active queue, and found the resolved record in All. The mock and Flask lifecycle checks recorded zero browser console errors. Physical devices and assistive-technology sessions were not tested.
+
+**Contract decision.** `GET /settings` stays admin-only. The admin resolve dialog uses the returned re-raise interval. The approved police fallback refers to “the delay configured in Settings.” This preserves contract 1.1.0. Absolute timestamps and date filters use browser-local time. F3a is ready for review.
 
 ## F2 — Public screens and realtime complete on the mock
 

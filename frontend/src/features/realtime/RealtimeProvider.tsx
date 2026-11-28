@@ -10,6 +10,12 @@ import { updateZone, updateAdvisory } from './cache';
 export const useConnection = create<{ status: 'connected' | 'reconnecting' }>(
   () => ({ status: 'reconnecting' }),
 );
+import {
+  updateAlert,
+  updatePoliceZone,
+  updateSource,
+  useSeries,
+} from '@/features/police/data';
 let started = false;
 function start() {
   if (started) return;
@@ -25,6 +31,18 @@ function start() {
   const citizen = () =>
     !useSession.getState().user ||
     useSession.getState().user?.role === 'citizen';
+  socket.on('zone:detail', (zone) => {
+    if (!citizen()) updatePoliceZone(queryClient, zone);
+  });
+  socket.on('source:status', (status) => {
+    if (!citizen()) updateSource(queryClient, status);
+  });
+  const onAlert = (alert: import('@contract/types').Alert) => {
+    if (!citizen()) updateAlert(queryClient, alert);
+  };
+  socket.on('alert:new', onAlert);
+  socket.on('alert:updated', onAlert);
+  socket.on('alert:escalated', ({ alert }) => onAlert(alert));
   socket.on('advisory:new', (item) => {
     updateAdvisory(queryClient, item.id, item);
     if (citizen()) toast(item.title);
@@ -42,6 +60,7 @@ function start() {
     socket.connect();
   }
   useSession.subscribe((s, old) => {
+    if (s.generation !== old.generation) useSeries.setState({ zones: {} });
     if (s.tokens?.access_token !== old.tokens?.access_token) connect();
   });
   connect();
