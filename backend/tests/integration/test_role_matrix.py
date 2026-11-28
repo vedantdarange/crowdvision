@@ -96,6 +96,18 @@ ROUTE_MATRIX: list[tuple[str, str, str, dict[str, Any] | None]] = [
     ("GET", "/api/v1/advisories", "public", None),
     ("POST", "/api/v1/advisories", "police", {"title": "Notice", "body": "Clear", "severity": "INFO"}),
     ("DELETE", "/api/v1/advisories/{advisory_id}", "police", None),
+    # --- B6 Web Push ---
+    (
+        "POST",
+        "/api/v1/push/subscriptions",
+        "police",
+        {
+            "endpoint": "https://push.example.com/sub/rm",
+            "keys": {"p256dh": "test-p256dh-key", "auth": "test-auth-secret"},
+        },
+    ),
+    ("DELETE", "/api/v1/push/subscriptions?endpoint=https%3A%2F%2Fpush.example.com%2Fsub%2Frm", "police", None),
+    ("POST", "/api/v1/push/test", "police", None),
 ]
 
 _ALLOWED_ROLES = {

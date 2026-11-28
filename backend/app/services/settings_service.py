@@ -8,10 +8,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app.config import settings as app_config
+from app.config import Settings, settings as app_config
 from app.core.errors import ValidationAppError
 from app.extensions import db
 from app.models.models import User
+from app.push.notifier import resolve_push_config
 from app.repositories.settings_repo import SettingsRepository
 from app.services.audit_service import AuditService
 
@@ -77,9 +78,16 @@ CONTRACT_VERSION = load_contract_version()
 
 
 class SettingsService:
-    def __init__(self, settings_repo: SettingsRepository, audit_service: AuditService) -> None:
+    def __init__(
+        self,
+        settings_repo: SettingsRepository,
+        audit_service: AuditService,
+        *,
+        app_settings: Settings | None = None,
+    ) -> None:
         self._repo = settings_repo
         self._audit = audit_service
+        self._app_settings = app_settings or app_config
         self._on_change: Any = None
 
     def set_on_change_callback(self, callback: Any) -> None:
@@ -135,13 +143,18 @@ class SettingsService:
     def get_config(self) -> dict[str, Any]:
         """Return public RuntimeConfig per contract §5."""
         all_settings = self.get_settings()
+        push_cfg = resolve_push_config(
+            vapid_public_key=self._app_settings.vapid_public_key,
+            vapid_private_key=self._app_settings.vapid_private_key,
+            vapid_subject=self._app_settings.vapid_subject,
+        )
         return {
             "target_fps": int(all_settings["target_fps"]),
             "frame_width": int(all_settings["frame_width"]),
             "jpeg_quality": float(all_settings["jpeg_quality"]),
             "stale_after_s": float(all_settings["stale_after_s"]),
-            "vapid_public_key": None,  # B6 will fill VAPID key
-            "app_version": app_config.app_version,
+            "vapid_public_key": push_cfg.public_key,
+            "app_version": self._app_settings.app_version,
             "contract_version": CONTRACT_VERSION,
         }
 

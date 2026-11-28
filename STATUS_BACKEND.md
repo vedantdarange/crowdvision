@@ -1,60 +1,55 @@
-# Backend status — updated 2026-11-27
-## Phase: B5b (done — ready for review)
+# Backend status — updated 2026-11-28
+## Phase: B6 (done — audit fixes verified, ready to commit)
 ## Done since last update
-- Implemented Phase B5b (M4 part 2 — Real `UltralyticsDetector` worker & latency evaluation) on branch `be/b5b-real-detector`:
-  - **`app/detection/model_loader.py` (NEW)**:
-    - `resolve_model_path()` checks CWD, `BACKEND_DIR`, and repo root for `MODEL_PATH` before importing `torch`/`ultralytics`.
-    - `extract_person_classes()` inspects `model.names` dynamically for `"person"` (case-insensitive) instead of hardcoding `0`, falling back to `classes=None` (no filter) when labels are unexpected.
-    - `load_ultralytics_model()` loads the YOLO weights once, logs `model.names` and resolved `person_classes`, and runs a blank-frame warm-up inference before reporting ready.
-  - **`app/detection/detector.py` & `app/detection/worker.py`**:
-    - Added `UltralyticsDetector` with lazy imports (`cv2`, `numpy`, `supervision`, `model_loader`): decodes JPEG frames strictly in RAM (`cv2.imdecode`), calls `model.predict(img, imgsz=imgsz, conf=conf, classes=..., verbose=False)`, converts via `supervision.Detections.from_ultralytics`, clamps/normalizes `boxes` to `0..1`, and enforces `score >= conf`. Raw occupancy count remains `len(boxes)`.
-    - Added `FrameDecodeError(ValueError)` strictly for JPEG byte/empty/decode validation in `UltralyticsDetector` (without catching unrelated `ValueError`s from `model.predict()` or `supervision`), and mapped `FrameDecodeError` in `run_worker()` to `BAD_IMAGE` while preserving `DETECTOR_UNAVAILABLE` for genuine detector/inference failures.
-    - Updated `build_detector("ultralytics", ...)` to construct `UltralyticsDetector` while keeping `fake` as default for tests/CI and keeping the main Flask process completely free of `torch`/`ultralytics`.
-  - **`app/detection/tracker.py`, `manager.py`, `container.py`**:
-    - Added optional `ByteTrackTrackerHook` & `build_tracker()` (`USE_TRACKER=true`) using `trackers.ByteTrackTracker(frame_rate=..., track_activation_threshold=...)` per source (with `PassThroughTracker` fallback if `trackers` is uninstalled). Analytics only — never alters occupancy count; resets on `reset=True`, `ResetSource`, and 30 s inactivity.
-    - Updated `DetectionManager.__init__` and `start()` so `DETECTOR_BACKEND=ultralytics` only validates `MODEL_PATH` in the main process and passes `model_path`, `target_fps`, `detect_conf`, and `warmup_imgsz` into the spawned `run_worker()` process (`container.py` wires `cfg.model_path`).
-    - Tightened `check_health()` `worker_alive` check during `stop()` teardown (`self._started and self._detector_status != "unavailable"`).
-  - **`eval/eval_latency.py` & `docs/DECISIONS.md`**:
-    - Built `eval/eval_latency.py` supporting `--input` (image folder or video file), `--frames`, `--model`, `--backend`, `--conf`, `--imgsz`, `--use-tracker`, and `--timeout` over the real spawned worker + Socket.IO `frame:submit` pipeline.
-    - Fail-fast setup checking: validates responses from `PATCH /api/v1/settings`, `POST /api/v1/zones`, and `POST /api/v1/sources`, printing validation errors and exiting nonzero before inference (`--conf 0.05` verified exiting `1` with `422 VALIDATION_ERROR`), and printing `effective_imgsz` / `effective_conf` on success (`--conf 0.85 --imgsz 480` verified reaching detector).
-    - Full per-frame accounting (`submitted`, `succeeded`, `busy_dropped`, `other_failed`, `timed_out`), strict `seq` matching that ignores late timed-out results, separate `Worker startup` and `First frame` reporting, `sample_size` percentile reporting (omitting percentiles and flagging `[PARTIAL RUN]` when `succeeded == 0`), and explicit **in-process submit-to-result** latency labeling.
-    - Measured against `D:\crowdvision\people_model.pt` (`{0: 'person'}`) on `AMD Ryzen 7 7840HS w/ Radeon 780M Graphics` (`torch 2.15.0+cpu`, `ultralytics 8.4.220`, `opencv-python 5.1.0.95`, `supervision 0.32.3`, `imgsz=640`, `conf=0.35`, `USE_TRACKER=false`, `20` frames from `ultralytics/assets`):
-      - `Worker startup`: **`5710.3 ms`** (`spawn + YOLO load + blank warm-up`)
-      - `Frames`: `submitted=20 | succeeded=20 | busy_dropped=0 | other_failed=0 | timed_out=0`
-      - `First frame`: `bus.jpg#1 -> count=3, infer_ms=814.20, in_process_e2e_ms=830.75`
-      - `infer_ms (sample_size=20)`: `min=25.53 | p50=32.39 | p95=82.04 | max=814.20`
-      - `in_process_e2e_ms (sample_size=20)`: `min=33.70 | p50=40.07 | p95=95.19 | max=830.75` (**PASS**, `<1500 ms` target)
-    - Recorded ADR in `docs/DECISIONS.md` keeping `.pt` CPU default over OpenVINO/ONNX given >12x p95 headroom.
+- Implemented Phase B6 (M5 — Web Push and reminders) + all 4 audit fixes on branch `be/b6-web-push`:
+  - **`requirements.txt` & local `.env`**:
+    - Installed and pinned `pywebpush==2.5.0` and `py-vapid==1.9.6` (`pip check` clean).
+    - Configured local git-ignored `backend/.env` with generated VAPID keypair and `VAPID_SUBJECT=mailto:vedmodzyt@gmail.com`.
+  - **`app/push/notifier.py`**:
+    - Implemented contract §9 payload builders `build_alert_payload()` (supports both `DENSITY` and `COUNT` zones, title `"<LEVEL> — <Zone>"`, `/police/alerts/{id}`, `alert-{id}`) and `build_sos_payload()` (`/police/reports?focus={id}`, `sos-{id}`, `CRITICAL`, filtering strictly to `CRUSH_RISK`, `FIRE`, and `MEDICAL` while leaving `LOST_CHILD` and `OTHER` in-app only).
+    - Implemented `WebPushNotifier` implementing `Notifier` (`notify_alert`, `notify_sos`, `send_test`) and wired into `Container` (`app/container.py` + `app/__init__.py` start/`atexit` stop).
+    - Alert and SOS dispatches enqueue non-blockingly after commit onto a bounded background queue (`maxsize=64`) executed in a dedicated daemon thread inside `flask_app.app_context()`, so `DetectionManager._pump_loop` and the 1 Hz background loop never stall on slow push endpoints; queue overflows drop the newest item, increment `dropped_count`, and log a warning without secrets or endpoints. `POST /push/test` (`send_test`) remains synchronous to return `{sent}`.
+    - Uses shared `resolve_push_config()` rule for both `WebPushNotifier` and `GET /api/v1/config`: blank keys or invalid `VAPID_SUBJECT` keep the backend running, disable push (`is_configured=False`, `vapid_public_key: null`), and log a concise warning without keys.
+    - Builds a **fresh** `vapid_claims = {"sub": ...}` dict on every `webpush()` call, sets `ttl=600`, `headers={"Urgency": "high"}`, and per-request `timeout=5.0`, delivers concurrently via `ThreadPoolExecutor`, and never logs full endpoint URLs or keys.
+    - Extended `FakeNotifier` with matching `notify_sos` filtering and `send_test` recording.
+  - **`app/models/models.py`, `migrations/versions/a4c8e2f19b30_add_push_subscription_revision.py`, `app/repositories/push_repo.py`, `app/api/v1/push.py`, `app/services/settings_service.py`**:
+    - Added `PushSubscription.revision` + Alembic migration `a4c8e2f19b30` (upgraded cleanly `71a56dd5987e -> a4c8e2f19b30`). `upsert()` increments `revision` on re-registration; `record_delivery_results()` applies `ok`/`gone` (`404`/`410` delete)/`fail` (`5` consecutive failures delete) outcomes atomically via SQL `WHERE id = :id AND revision = :rev` so stale delayed outcomes never corrupt refreshed subscriptions.
+    - Added `/api/v1/push/subscriptions` (`POST` upsert by `endpoint`, `DELETE ?endpoint=` using `request.args` directly without double `unquote`) and `POST /api/v1/push/test` (`200 {data: {sent}}`), restricted to active `police`/`admin` users; broadcasts filter to active (`is_active=True`) `police`/`admin` users.
+    - Updated `GET /api/v1/config` (`RuntimeConfig.vapid_public_key`) using `resolve_push_config()` so `/config` and `WebPushNotifier` always agree.
+  - **`docs/DEMO.md`**:
+    - Added manual M5 Web Push verification checklist for locked Android Chrome via `cloudflared` HTTPS tunnel + Person B's F5 push UI.
   - **Tests**:
-    - Extended `tests/unit/test_detection.py` (`extract_person_classes`, `resolve_model_path`, `UltralyticsDetector` JPEG decode/normalization/unfiltered fallback, `FrameDecodeError` vs `ValueError` separation, `run_worker` `BAD_IMAGE` vs `DETECTOR_UNAVAILABLE` mapping, `ByteTrackTrackerHook`, and `"torch" not in sys.modules` in main process).
-    - Extended `tests/integration/test_detection_pipeline.py` with `TestUltralyticsRealWorkerEndToEnd` (cleanly skipped when `torch`/model absent): real YOLO inference counts (`zidane.jpg`, `bus.jpg`), normalized boxes, `/api/v1/health`, `detect_once()`, zero main-process disk writes, `"torch" not in sys.modules` verification, worker kill/restart recovery with post-restart `zidane.jpg` inference, and decode failure returning `BAD_IMAGE` while preserving prior zone state and recovering cleanly.
-    - Focused B5a+B5b detection suite (`.\.venv\Scripts\python.exe -m pytest tests/unit/test_detection.py tests/integration/test_detection_pipeline.py -v --tb=short`): **`44 passed, 72 warnings in 82.77s`**.
-    - Full backend suite (`.\.venv\Scripts\python.exe -m pytest tests/ -v --tb=short`): **`237 passed, 1 skipped, 339 warnings in 97.65s`** (`1` skipped: `test_journal_mode_wal` on `:memory:` SQLite, covered by `test_journal_mode_wal_on_file_db`).
+    - Added [tests/unit/test_push.py](file:///d:/crowdvision/backend/tests/unit/test_push.py) (13 tests: Alert & SOS payloads in `DENSITY`/`COUNT`, `LOST_CHILD`/`OTHER` exclusion, shared `resolve_push_config`/`mailto:` validation without key leaks, `FakeClock` + `FakeNotifier` cooldown/CRITICAL/escalation/reminder rules, fresh `vapid_claims` per call, log secret redaction, non-blocking failed/410 delivery).
+    - Added [tests/integration/test_push.py](file:///d:/crowdvision/backend/tests/integration/test_push.py) (11 tests: RBAC + upsert + delete, encoded `%2B`/`%3D` unsubscribe owner-only, `/config` + notifier consistency on blank keys & invalid `VAPID_SUBJECT`, `/push/test` caller-scoped count, HTTP `410` delete, `5`-failure delete & success reset, stale delayed `410` vs same-row re-registration revision protection, disabled user exclusion, end-to-end `AlertService.apply` cooldown/CRITICAL/REOPENED/ESCALATED/REMINDER, and held-transport non-blocking pump/2nd-frame/tick-loop + full-queue overflow tests).
+    - Extended [tests/integration/test_role_matrix.py](file:///d:/crowdvision/backend/tests/integration/test_role_matrix.py) with the 3 `/push/*` endpoints (`35` parametrized RBAC assertions total).
+    - Focused B6/config/RBAC check (`tests/unit/test_push.py`, `tests/integration/test_push.py`, `tests/integration/test_config.py`, `tests/integration/test_role_matrix.py`): **`67 passed in 16.59s`**.
+    - Full backend suite (`tests/`): **`264 passed, 1 skipped in 136.21s`** (`1` skipped: `test_journal_mode_wal` on `:memory:` SQLite, covered by `test_journal_mode_wal_on_file_db`).
 
 ## In progress
-- None (Phase B5b fixes complete and verified on `be/b5b-real-detector`; awaiting review/commit. Phase B6 not started).
+- None (Phase B6 audit fixes complete on `be/b6-web-push`; awaiting manual Android Chrome + HTTPS tunnel push verification).
 
 ## Blocked / questions for Person A
 - None.
 
 ## Requests for AI-B (frontend)
-- `DETECTOR_BACKEND=ultralytics` works end-to-end with `people_model.pt` (`p95 in-process submit-to-result = 95.19 ms` on CPU at `640 px`); ready for joint webcam/monitor testing (`DETECTOR_BACKEND=ultralytics` in local `backend/.env` using `backend/.venv\Scripts\python.exe`).
+- Ready for F5 integration: `GET /api/v1/config` exposes `vapid_public_key`, and `/api/v1/push/subscriptions` (`POST`/`DELETE`) + `POST /api/v1/push/test` are live with contract §9 payloads.
 
 ## Untested / known issues
-- Browser capture-to-result latency (webcam capture, browser JPEG encoding, and WebSocket transport over a live frontend connection to Person B's monitor screen) is **pending Person B's monitor test**; measured `95.19 ms` p95 is strictly **in-process submit-to-result**.
-- Real `trackers` (`2.7.x`) package was not installed in `backend/.venv` (keeping `USE_TRACKER=false` default per setup notes); `ByteTrackTrackerHook` constructor (`frame_rate`, `track_activation_threshold`) and `update(..., timestamp=...)` / `reset()` were verified against the `trackers==2.7.1` wheel source and tested with a matching stub.
-- Child-process zero disk writes/JPEG logging (`worker.py` / `detector.py`) verified by code inspection; main-process zero disk writes verified via `open`/`tempfile` spies during real YOLO execution.
-- Carried over: retention cleanup of citizen reports (`B7`), `flask set-password` failure paths, `413 PAYLOAD_TOO_LARGE`, and `test_journal_mode_wal` on `:memory:` SQLite (covered by `test_journal_mode_wal_on_file_db`).
+- Locked Android Chrome manual test (`docs/DEMO.md`) via `cloudflared` HTTPS tunnel + Person B's F5 push screen has not yet been run (all `pywebpush` HTTP calls in automated tests used mocked `webpush` transport).
+- Browser capture-to-result latency (joint frontend webcam stream + Person B's monitor screen) remains pending Person B's monitor test.
+- Carried over: retention cleanup of citizen reports (`B7`), `flask set-password` failure paths, `trackers` real wheel installation (`USE_TRACKER=false` default), and `test_journal_mode_wal` on `:memory:` SQLite.
 
 ## Next 3 steps
-1. Run manual live webcam / crowd video test against Person B's monitor screen with `DETECTOR_BACKEND=ultralytics` in `backend/.env` to measure browser capture-to-result latency.
-2. Review and commit `be/b5b-real-detector` (and merge B5a + B5b PRs).
-3. Begin Phase B6 (M5): `WebPushNotifier` (`pywebpush` + `py-vapid`) and `/push/*` endpoints.
+1. Run manual Android Chrome + `cloudflared` HTTPS tunnel Web Push test (`docs/DEMO.md`) and joint webcam/monitor latency check with Person B.
+2. Begin Phase B7 (M6): Citizen reports (`/reports/crowd`, `/reports/sos`, `/reports`, `PATCH /reports/{id}`, memory-only upload, SOS `notify_sos` hook, rate limits, retention).
+3. Begin Phase B8 (M7): Analytics summary & CSV export, startup default-password check, `/audit-logs`, and demo static serving (`SERVE_FRONTEND=true`).
 
 ## Numbers (latency, MAE, coverage) once available
-- CPU (`AMD Ryzen 7 7840HS`), `people_model.pt` (`imgsz=640`, `conf=0.35`, `USE_TRACKER=false`, `torch 2.15.0+cpu`, `sample_size=20`):
-  - Worker startup (`spawn + YOLO load + blank warm-up`): **`5710.3 ms`**
-  - First frame (`bus.jpg#1`): **`814.20 ms` infer**, **`830.75 ms` in-process submit-to-result**
-  - Inference (`infer_ms`): **`p50 = 32.39 ms`**, **`p95 = 82.04 ms`**
-  - In-process submit-to-result (`in_process_e2e_ms`): **`p50 = 40.07 ms`**, **`p95 = 95.19 ms`** (target `< 1500 ms`; browser capture-to-result pending Person B's monitor test)
+- **CPU (`backend/.venv`)** — `AMD Ryzen 7 7840HS`, `people_model.pt` (`imgsz=640`, `conf=0.35`, `USE_TRACKER=false`, `torch 2.15.0+cpu`):
+  - `eval/eval_latency.py` (`20` frames, `ultralytics/assets`): Worker startup `9964.2 ms` | First frame `bus.jpg#1` `5712.29 ms` infer / `5733.82 ms` in-process e2e (`bus.jpg=3`, `zidane.jpg=2`) | `infer_ms`: `p50 = 52.45 ms`, `p95 = 351.53 ms` | `in_process_e2e_ms`: `p50 = 64.71 ms`, `p95 = 366.88 ms`
+  - Paced `3.0 FPS` steady state (`60` frames / `20.0 s` wall, `16` logical CPUs): Main `0.500 s` (`2.50%` of 1 core), Worker `103.234 s` (`516.16%` of 1 core), Total `103.734 s` (`518.66%` of 1 core / **`32.42%` of system CPU**); `infer_ms` `p50 = 48.81 ms` / `p95 = 86.67 ms`, `in_process_e2e_ms` `p50 = 56.54 ms` / `p95 = 94.03 ms`
+- **GPU (`backend/.venv-gpu`)** — `NVIDIA GeForce RTX 4060 Laptop GPU` (`8188 MiB`, Driver `616.92`, `cuda:0`), `people_model.pt` (`imgsz=640`, `conf=0.35`, `USE_TRACKER=false`, `torch 2.14.1+cu126`, `torchvision 0.29.1+cu126`):
+  - `eval/eval_latency.py` (`20` frames, `ultralytics/assets`): Worker startup `9172.4 ms` | First frame `bus.jpg#1` `1520.41 ms` infer / `1540.62 ms` in-process e2e (`bus.jpg=3`, `zidane.jpg=2`) | `infer_ms`: `p50 = 21.50 ms`, `p95 = 105.83 ms` | `in_process_e2e_ms`: `p50 = 31.04 ms`, `p95 = 116.89 ms`
+  - Paced `3.0 FPS` steady state (`60` frames / `20.0 s` wall, `16` logical CPUs): Main `0.672 s` (`3.36%` of 1 core), Worker `1.688 s` (`8.44%` of 1 core), Total `2.359 s` (`11.80%` of 1 core / **`0.74%` of system CPU**); `infer_ms` `p50 = 30.23 ms` / `p95 = 38.37 ms`, `in_process_e2e_ms` `p50 = 38.18 ms` / `p95 = 48.16 ms`
+- **Browser capture-to-result latency:** Pending the joint monitor test with Person B (live webcam capture + browser JPEG encode + WebSocket transport).
 - Pure `app/engine/` unit coverage: **97%** (measured in B4a). Counting MAE/RMSE evaluation deferred to B9.

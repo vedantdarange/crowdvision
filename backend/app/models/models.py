@@ -361,6 +361,9 @@ class PushSubscription(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
 
 
 # ---------------------------------------------------------------------------
