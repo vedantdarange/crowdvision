@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { FrameResult } from '@contract/types';
 import { computeContainRect, mapBoxes } from './overlay';
 
@@ -11,7 +11,7 @@ interface DetectionOverlayProps {
 
 const STALE_MS = 1000;
 
-export function DetectionOverlay({
+function DetectionOverlayBase({
   videoRef,
   lastResult,
   resultTimestamp,
@@ -131,3 +131,5 @@ export function DetectionOverlay({
     </>
   );
 }
+
+export const DetectionOverlay = memo(DetectionOverlayBase);

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { TriangleAlert } from 'lucide-react';
 import type { FrameResult } from '@contract/types';
 import { DensityValue } from '@/components/status/DensityValue';
@@ -11,7 +12,7 @@ interface MonitorHudProps {
   drops: number;
 }
 
-export function MonitorHud({
+function MonitorHudBase({
   lastResult,
   fps,
   latencyMs,
@@ -96,3 +97,5 @@ export function MonitorHud({
     </div>
   );
 }
+
+export const MonitorHud = memo(MonitorHudBase);
